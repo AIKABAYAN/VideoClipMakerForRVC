@@ -191,7 +191,7 @@ class App:
         add_background = self.add_background.get()
         bg_folder = self.bg_folder.get() if add_background else ""
         output_folder = self.output_folder.get()
-        song_name = self.song_name.get().strip() or "Untitled"
+        # song_name = self.song_name.get().strip() or "Untitled"
         artist_name = self.artist_name.get().strip() or "Unknown"
         cover_path = self.cover_path.get()
         bg_mode = self.bg_mode.get() if add_background else "Black"
@@ -230,7 +230,7 @@ class App:
                 logger.info(f"Start YT: {yt_output_path}")
                 build_video_multithread(
                     mp3_path=mp3, bg_folder=bg_folder, cover_path=cover_path,
-                    song_name=song_name, artist_name=artist_name,
+                    song_name="", artist_name=artist_name,
                     output_path=yt_output_path,
                     resolution=yt_res,
                     bg_mode=bg_mode, blur_level=blur_level,
@@ -250,7 +250,7 @@ class App:
                 logger.info(f"Start Shorts: {shorts_output_path}")
                 build_video_multithread(
                     mp3_path=mp3, bg_folder=bg_folder, cover_path=cover_path,
-                    song_name=song_name, artist_name=artist_name,
+                    song_name="", artist_name=artist_name,
                     output_path=shorts_output_path,
                     resolution=(720, 1280),
                     bg_mode=bg_mode, blur_level=blur_level,
