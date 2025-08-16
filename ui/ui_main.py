@@ -252,7 +252,7 @@ class App:
                     mp3_path=mp3, bg_folder=bg_folder, cover_path=cover_path,
                     song_name="", artist_name=artist_name,
                     output_path=shorts_output_path,
-                    resolution=(720, 1280),
+                    resolution=(1080, 1920),
                     bg_mode=bg_mode, blur_level=blur_level,
                     progress_callback=lambda p: self.update_progress(p, "shorts", total_tasks, done_tasks),
                     animations=selected_anims,

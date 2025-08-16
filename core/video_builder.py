@@ -92,9 +92,9 @@ def save_disclaimer(mp3_path, artist_name, output_path):
 - Created using **Retrieval-Based Voice Conversion (RVC)**, an AI voice-cloning tool.  
 - This is a **non-professional hobbyist experiment**—not intended for commercial use.  
 
-    Voice Synthesis: Retrieval-Based Voice Conversion (RVC)
+    Voice Synthesis: Retrieval-Based Voice Conversion (RVC) 
 
-    Audio Production: LMMS Studio
+    Audio Production: Replay, LMMS Studio
 
     Video Production: open source https://github.com/AIKABAYAN/VideoClipMakerForRVC.git 
 

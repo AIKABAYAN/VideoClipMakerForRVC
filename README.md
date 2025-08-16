@@ -130,7 +130,7 @@ Outputs:
 
 5.6 Output Formats
 
-    [✅ Implemented] All specified formats (YouTube, YouTube Shorts, TikTok) with correct resolutions and length constraints.
+    [✅ Partially Implemented] All specified formats (YouTube, YouTube Shorts, TikTok, Instagram) with correct resolutions and length constraints. ( YouTube Shorts, TikTok, Instagram not working)
 
     [✅ Implemented] Codec: H.264, container: .mp4.
     
