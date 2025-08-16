@@ -96,7 +96,7 @@ def save_disclaimer(mp3_path, artist_name, output_path):
 
     Audio Production: LMMS Studio
 
-    Video Production: Python based video generator
+    Video Production: open source https://github.com/AIKABAYAN/VideoClipMakerForRVC.git 
 
 💬 **Suggest me what song want to RVC** Comment requests below!   
 
