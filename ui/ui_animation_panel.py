@@ -2,27 +2,28 @@ import tkinter as tk
 
 class AnimationPanel:
     def __init__(self, parent):
+        # Default animation states (semua False dulu, nanti kita pilih default yg 3 aja)
         self.anim_vars = {
-            "zoom-in": tk.BooleanVar(value=True),
-            "zoom-out": tk.BooleanVar(value=True),
-            "pan-left": tk.BooleanVar(value=True),
-            "pan-right": tk.BooleanVar(value=True),
-            "pan-up": tk.BooleanVar(value=True),
-            "pan-down": tk.BooleanVar(value=True),
-            "rotate-ccw": tk.BooleanVar(value=True),
-            "rotate-cw": tk.BooleanVar(value=True),
-            "fade-in": tk.BooleanVar(value=True),
-            "fade-out": tk.BooleanVar(value=True),
-            "bounce": tk.BooleanVar(value=True),
-            "glow-pulse": tk.BooleanVar(value=True),
-            "tilt-swing": tk.BooleanVar(value=True),
-            "color-shift": tk.BooleanVar(value=True),
-            "pixelate": tk.BooleanVar(value=True),
-            "squeeze": tk.BooleanVar(value=True),
-            "radial-blur": tk.BooleanVar(value=True),
-            "shake": tk.BooleanVar(value=True),
-            "parallax": tk.BooleanVar(value=True),
-            "shadow-pulse": tk.BooleanVar(value=True),
+            "zoom-in": tk.BooleanVar(value=False),
+            "zoom-out": tk.BooleanVar(value=False),
+            "pan-left": tk.BooleanVar(value=False),
+            "pan-right": tk.BooleanVar(value=False),
+            "pan-up": tk.BooleanVar(value=False),
+            "pan-down": tk.BooleanVar(value=False),
+            "rotate-ccw": tk.BooleanVar(value=False),
+            "rotate-cw": tk.BooleanVar(value=False),
+            "fade-in": tk.BooleanVar(value=True),   # ✅ default aktif
+            "fade-out": tk.BooleanVar(value=True),  # ✅ default aktif
+            "bounce": tk.BooleanVar(value=False),
+            "glow-pulse": tk.BooleanVar(value=False),
+            "tilt-swing": tk.BooleanVar(value=False),
+            "color-shift": tk.BooleanVar(value=False),
+            "pixelate": tk.BooleanVar(value=False),
+            "squeeze": tk.BooleanVar(value=False),
+            "radial-blur": tk.BooleanVar(value=False),
+            "shake": tk.BooleanVar(value=True),     # ✅ default aktif
+            "parallax": tk.BooleanVar(value=False),
+            "shadow-pulse": tk.BooleanVar(value=False),
             "mosaic": tk.BooleanVar(value=False),
             "lens-flare": tk.BooleanVar(value=False),
             "watercolor": tk.BooleanVar(value=False),
@@ -38,19 +39,19 @@ class AnimationPanel:
         anim_frame = tk.LabelFrame(parent, text="Animation Effects", padx=5, pady=5)
         anim_frame.grid(row=15, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
 
-        # Create columns for checkboxes
-        col_frames = [tk.Frame(anim_frame) for _ in range(3)]
+        # Buat 5 kolom biar rapi
+        col_frames = [tk.Frame(anim_frame) for _ in range(5)]
         for idx, frame in enumerate(col_frames):
             frame.grid(row=0, column=idx, sticky="nw")
 
-        # Add checkboxes to columns
+        # Tambahkan checkbox ke masing-masing kolom
         for i, (anim_name, var) in enumerate(self.anim_vars.items()):
-            cb = tk.Checkbutton(col_frames[i // 10], text=anim_name, variable=var)
+            cb = tk.Checkbutton(col_frames[i % 5], text=anim_name, variable=var)
             cb.pack(anchor="w")
 
-        # Buttons for quick selection
+        # Buttons untuk quick select
         btn_frame = tk.Frame(anim_frame)
-        btn_frame.grid(row=1, column=0, columnspan=3, pady=(5, 0))
+        btn_frame.grid(row=1, column=0, columnspan=5, pady=(5, 0))
         tk.Button(btn_frame, text="Select All", command=self.select_all).pack(side="left", padx=5)
         tk.Button(btn_frame, text="Select None", command=self.deselect_all).pack(side="left", padx=5)
         tk.Button(btn_frame, text="Basic Only", command=self.select_basic).pack(side="left", padx=5)
@@ -67,7 +68,7 @@ class AnimationPanel:
     def select_basic(self):
         basic_anims = [
             "zoom-in", "zoom-out", "pan-left", "pan-right", "pan-up", "pan-down",
-            "rotate-ccw", "rotate-cw", "fade-in", "fade-out"
+            "rotate-ccw", "rotate-cw", "fade-in", "fade-out", "shake"
         ]
         for anim_name, var in self.anim_vars.items():
             var.set(anim_name in basic_anims)
@@ -75,7 +76,7 @@ class AnimationPanel:
     def select_advanced(self):
         basic_anims = [
             "zoom-in", "zoom-out", "pan-left", "pan-right", "pan-up", "pan-down",
-            "rotate-ccw", "rotate-cw", "fade-in", "fade-out"
+            "rotate-ccw", "rotate-cw", "fade-in", "fade-out", "shake"
         ]
         for anim_name, var in self.anim_vars.items():
             var.set(anim_name not in basic_anims)

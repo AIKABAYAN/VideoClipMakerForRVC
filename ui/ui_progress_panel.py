@@ -1,43 +1,63 @@
 import tkinter as tk
 from tkinter import ttk
 
+
 class ProgressPanel:
     def __init__(self, parent):
-        # YouTube progress
-        tk.Label(parent, text="YouTube Progress:").grid(row=11, column=0, sticky="w")
-        self.youtube_progress = ttk.Progressbar(parent, orient="horizontal", length=400, mode="determinate")
-        self.youtube_progress.grid(row=11, column=1, columnspan=2)
+        # Bungkus semua di frame supaya gampang diposisikan
+        self.frame = tk.LabelFrame(parent, text="Progress", padx=5, pady=5)
 
-        # Shorts progress
-        tk.Label(parent, text="Shorts/TikTok Progress:").grid(row=12, column=0, sticky="w")
-        self.shorts_progress = ttk.Progressbar(parent, orient="horizontal", length=400, mode="determinate")
-        self.shorts_progress.grid(row=12, column=1, columnspan=2)
+        # Progress YouTube
+        tk.Label(self.frame, text="YouTube:").grid(row=0, column=0, sticky="w")
+        self.progress_youtube = ttk.Progressbar(self.frame, length=300)
+        self.progress_youtube.grid(row=0, column=1, padx=5, pady=2)
+        self.progress_youtube["value"] = 0
+        self.youtube_status = tk.Label(self.frame, text="0%")
+        self.youtube_status.grid(row=0, column=2, sticky="w")
+        self.youtube_stage = tk.Label(self.frame, text="⚙️ Idle")
+        self.youtube_stage.grid(row=0, column=3, sticky="w", padx=(10, 0))
 
-        # Total progress
-        tk.Label(parent, text="Total Progress:").grid(row=13, column=0, sticky="w")
-        self.progress = ttk.Progressbar(parent, orient="horizontal", length=400, mode="determinate")
-        self.progress.grid(row=13, column=1, columnspan=2)
+        # Progress Shorts
+        tk.Label(self.frame, text="Shorts:").grid(row=1, column=0, sticky="w")
+        self.progress_shorts = ttk.Progressbar(self.frame, length=300)
+        self.progress_shorts.grid(row=1, column=1, padx=5, pady=2)
+        self.progress_shorts["value"] = 0
+        self.shorts_status = tk.Label(self.frame, text="0%")
+        self.shorts_status.grid(row=1, column=2, sticky="w")
+        self.shorts_stage = tk.Label(self.frame, text="⚙️ Idle")
+        self.shorts_stage.grid(row=1, column=3, sticky="w", padx=(10, 0))
 
-        # Elapsed time label
-        self.time_label = tk.Label(parent, text="Waktu: 0 detik")
-        self.time_label.grid(row=14, column=0, columnspan=3)
+        # ETA / Waktu
+        self.time_label = tk.Label(self.frame, text="Waktu: 0 detik")
+        self.time_label.grid(row=2, column=0, columnspan=4, sticky="w", pady=(5, 0))
 
-    def update_progress(self, percent, task_type, total_tasks, done_tasks):
-        """
-        Update progress bar values.
-        :param percent: Current percent (0-100) for the task
-        :param task_type: "youtube" or "shorts"
-        :param total_tasks: Total number of export tasks
-        :param done_tasks: Number of completed tasks
-        """
-        if task_type == "youtube":
-            self.youtube_progress["value"] = percent
-        elif task_type == "shorts":
-            self.shorts_progress["value"] = percent
+    def update_progress(self, percent, task_type, total_tasks=1, done_tasks=0):
+        """Update progress bar, percent, dan tahap render"""
 
-        total_percent = (done_tasks / max(1, total_tasks) * 100) + (percent / max(1, total_tasks))
-        self.progress["value"] = total_percent
+        percent = max(0, min(100, percent))  # clamp 0-100
+
+        # mapping task_type jadi label & ikon
+        task_labels = {
+            "setup": "⚙️ Setup",
+            "render": "🎨 Render",
+            "merge": "🧩 Merge",
+            "overlay": "✨ Overlay",
+            "finalize": "✅ Finalize",
+            "error": "❌ Error",
+        }
+        label = task_labels.get(task_type, f"🔹 {task_type.capitalize()}")
+
+        # update ke YouTube
+        if task_type.lower().startswith("youtube") or task_type in task_labels:
+            self.progress_youtube["value"] = percent
+            self.youtube_status.config(text=f"{percent:.1f}% ({done_tasks}/{total_tasks})")
+            self.youtube_stage.config(text=label)
+
+        # update ke Shorts
+        if task_type.lower().startswith("shorts"):
+            self.progress_shorts["value"] = percent
+            self.shorts_status.config(text=f"{percent:.1f}% ({done_tasks}/{total_tasks})")
+            self.shorts_stage.config(text=label)
 
     def update_time(self, text):
-        """Update the elapsed time label."""
         self.time_label.config(text=text)
