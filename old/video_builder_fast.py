@@ -1,5 +1,3 @@
-update from this file Preserve the parameter build_video_multithread, cause its call from other file, must doesnt change
-
 # video_builder.py
 from PIL import Image, ImageFilter
 # Pillow 10+ compatibility shim
@@ -728,6 +726,3 @@ def build_video_multithread(settings, progress_callback=None):
         logger.error(f"Error during build_video_multithread: {e}", exc_info=True)
         if progress_callback:
             progress_callback(0, "error")
-
-
-

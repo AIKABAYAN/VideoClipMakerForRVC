@@ -1,591 +1,429 @@
-from PIL import Image, ImageFilter
-
+# video_builder.py
+from PIL import Image, ImageFilter, ImageDraw, ImageFont
 # Pillow 10+ compatibility shim
 if not hasattr(Image, 'ANTIALIAS'):
     Image.ANTIALIAS = Image.LANCZOS
 
 import os
-import random
+import re
 import tempfile
 import platform
 import shutil
 import subprocess
 import math
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from multiprocessing import Process, Queue
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from os.path import basename, splitext
+from typing import List, Tuple, Dict, Any
+import textwrap
+
 import numpy as np
-from moviepy.editor import (
-    ImageClip, ColorClip, CompositeVideoClip,
-    AudioFileClip, TextClip, VideoFileClip, concatenate_videoclips
-)
+from moviepy.editor import AudioFileClip
 from moviepy.config import change_settings
 from core.utils import list_images
 from core.logger import get_logger
 from tqdm import tqdm
-from threading import Thread
 
-from .animations import apply_image_animation
-from .transitions import apply_random_transition
+# These modules are project-specific; keep them as-is
 from core.visualizer import generate_visualizer_clip
+from .disclaimer_builder import save_disclaimer
 
 logger = get_logger("sikabayan")
 
 # Console colors
 GREEN = "\033[92m"
-BLUE  = "\033[94m"
-YELLOW= "\033[93m"
+BLUE = "\033[94m"
+YELLOW = "\033[93m"
 RESET = "\033[0m"
+CYAN = "\033[96m"
+
+# --- Resource Management ---
+CPU_USAGE_PERCENT = 0.80 
+MAX_WORKERS = max(1, int(os.cpu_count() * CPU_USAGE_PERCENT))
+
 
 def log_frame(stage, message, color=""):
+    """Logs a formatted message to the console using tqdm for clean output."""
     border = "═" * (len(stage) + len(message) + 5)
     tqdm.write(f"╔{border}╗")
     tqdm.write(f"║ {color}{stage}{RESET} | {message} ║")
     tqdm.write(f"╚{border}╝")
 
 # -------------------------------
-# FFmpeg & ImageMagick
+# FFmpeg & ImageMagick / helpers
 # -------------------------------
-def check_ffmpeg_encoders():
+def check_ffmpeg():
+    """Checks if FFmpeg is installed and available in the system's PATH."""
     try:
-        result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True, check=True)
-        encoders = result.stdout
-        if "libx264" in encoders:
-            return "libx264"
-        if "h264_nvenc" in encoders:
-            try:
-                nvidia_check = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
-                if nvidia_check.returncode == 0:
-                    test_cmd = ["ffmpeg", "-f", "lavfi", "-i", "testsrc",
-                                "-c:v", "h264_nvenc", "-preset", "fast", "-t", "1", "-f", "null", "-"]
-                    subprocess.run(test_cmd, capture_output=True, check=True)
-                    return "h264_nvenc"
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                logger.warning("NVENC detected but no working NVIDIA GPU found")
-        if "mpeg4" in encoders:
-            return "mpeg4"
-        raise RuntimeError("No suitable video encoder found in FFmpeg")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"FFmpeg encoder check failed: {e.stderr}")
-        raise RuntimeError("Could not check FFmpeg encoders")
-    except FileNotFoundError:
-        raise RuntimeError("FFmpeg not found in PATH")
+        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+    except Exception:
+        raise RuntimeError("FFmpeg not found. Please install it and ensure it's in your system's PATH.")
 
-# -------------------------------
-# Disclaimer generator
-# -------------------------------
-def save_disclaimer(mp3_path, artist_name, output_path):
-    base_name = os.path.splitext(os.path.basename(mp3_path))[0]
-    output_txt = os.path.splitext(output_path)[0] + ".txt"
+def detect_best_encoder() -> Tuple[str, Dict[str, str]]:
+    """Detects the fastest available hardware encoder."""
+    check_ffmpeg()
+    try:
+        enc_list = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True, check=True).stdout
+    except Exception as e:
+        raise RuntimeError(f"Failed to query FFmpeg encoders: {e}")
 
-    disclaimer = f"""🎵 {base_name} - {artist_name}  
-
-⚠️ **Legal Disclaimer**:  
-- This is a **fan-made AI cover** for **hobby/experimental purposes only**.  
-- I do **not** claim ownership of the original music/voice. 
-  All rights belong to the copyright holders.  
-- **Not monetized** → This channel earns **no money** from these videos.  
-
-🔧 **RVC Model Used**: Sharkoded  
-🎶 **Original Song**: {base_name}  
-
-📌 **About This Project**:  
-- Created using **Retrieval-Based Voice Conversion (RVC)**, an AI voice-cloning tool.  
-- This is a **non-professional hobbyist experiment**—not intended for commercial use.  
-
-    Voice Synthesis: Retrieval-Based Voice Conversion (RVC) 
-
-    Audio Production: Replay, LMMS Studio
-
-    Video Production: open source https://github.com/AIKABAYAN/VideoClipMakerForRVC.git 
-
-💬 **Suggest me what song want to RVC** Comment requests below!   
-
-⚠️ COPYRIGHT & TAKEDOWN POLICY
-
-This video is a transformative work created under the principles of Fair Use. 
-It is a non-profit, hobbyist project and is not monetized. 
-I do not claim ownership of the original musical composition or lyrics. 
-All rights, credits, and ownership belong to the original artists, their labels, and publishers.
-
-If you are a copyright holder and would like this content removed, 
-please do not issue a copyright strike. 
-Contact me directly at the email address below, 
-and I will promptly and respectfully remove the video upon verification of your claim.
-
-Contact for Takedown Requests: sharkoded@gmail.com
-
-Thank you for watching and supporting this creative experiment! 
-If you enjoyed it, please consider liking and subscribing for more.
-
-#AICover #RVC #AImusic #VoiceCloning #AIvoice #MusicTech 
-#{artist_name.replace(" ", "")} 
-# #{base_name.replace(" ", "")} 
-# #VoiceSynthesis #DeepfakeVoice #FYP
-#RVC #AIcover #VoiceSynthesis #AIsinging #AIvoice #FYP #Viral #AImusic 
-#DeepfakeVoice #Hobbyist #NoCopyrightIntended  
-#sharkoded
-
-👍 **Like & Subscribe** for more AI voice experiments!  
-"""
-    with open(output_txt, "w", encoding="utf-8") as f:
-        f.write(disclaimer)
+    if "h264_nvenc" in enc_list:
+        try:
+            if subprocess.run(["nvidia-smi"], capture_output=True).returncode == 0:
+                logger.info("NVIDIA NVENC encoder detected.")
+                return "h264_nvenc", {"preset": "p1", "rc": "vbr"}
+        except Exception: pass
+    if "h264_qsv" in enc_list:
+        logger.info("Intel QuickSync (QSV) encoder detected.")
+        return "h264_qsv", {"preset": "veryfast"}
+    if "h264_amf" in enc_list:
+        logger.info("AMD AMF encoder detected.")
+        return "h264_amf", {"quality": "speed"}
+    if "libx264" in enc_list:
+        logger.info("Using CPU-based libx264 encoder (ultrafast preset).")
+        return "libx264", {"preset": "ultrafast", "tune": "zerolatency"}
+    raise RuntimeError("No suitable H.264 encoder found.")
 
 def configure_imagemagick():
+    """Configures the path to the ImageMagick binary for Windows."""
     if platform.system() == "Windows":
-        possible_paths = [
-            r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe",
-            r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe",
-            r"C:\Program Files\ImageMagick-7.1.0-Q16-HDRI\magick.exe",
-            r"C:\Program Files\ImageMagick-7.0.11-Q16-HDRI\magick.exe"
-        ]
-        for imagemagick_path in possible_paths:
-            try:
-                if os.path.exists(imagemagick_path):
-                    change_settings({"IMAGEMAGICK_BINARY": imagemagick_path})
-                    logger.info(f"ImageMagick binary configured at: {imagemagick_path}")
+        for path in [r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe", r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"]:
+            if os.path.exists(path):
+                try:
+                    change_settings({"IMAGEMAGICK_BINARY": path})
+                    logger.info(f"ImageMagick binary configured at: {path}")
                     return True
-            except Exception as e:
-                logger.error(f"Error configuring ImageMagick: {e}")
-        logger.warning("ImageMagick binary not found at standard paths.")
+                except Exception as e:
+                    logger.error(f"Error configuring ImageMagick: {e}")
+        logger.warning("ImageMagick binary not found. Text features may fail.")
         return False
     return True
 
 # -------------------------------
-# Background processing
+# Speed Helpers
 # -------------------------------
-def create_blurred_background(img_path, resolution, blur_level, temp_dir):
-    try:
-        img = Image.open(img_path).convert("RGB")
-        img_bg = img.resize(resolution, Image.LANCZOS)
-        radius = max(1, min(10, blur_level))
-        img_bg = img_bg.filter(ImageFilter.GaussianBlur(radius=radius))
-        temp_path = os.path.join(temp_dir, f"blur_{os.path.basename(img_path)}.jpg")
-        img_bg.save(temp_path, quality=95)
-        return temp_path
-    except Exception as e:
-        logger.error(f"Failed to create blurred background: {e}")
-        raise
-
-def create_darkened_background(img_path, resolution, darkness_level, temp_dir):
-    try:
-        img = Image.open(img_path).convert("RGB")
-        img_bg = img.resize(resolution, Image.LANCZOS)
-        arr = np.array(img_bg)
-        darkness = max(0, min(1, darkness_level/10))
-        arr = (arr * darkness).astype(np.uint8)
-        img_bg = Image.fromarray(arr)
-        temp_path = os.path.join(temp_dir, f"dark_{os.path.basename(img_path)}.jpg")
-        img_bg.save(temp_path, quality=95)
-        return temp_path
-    except Exception as e:
-        logger.error(f"Failed to create darkened background: {e}")
-        raise
-
 def select_bitrate_for_resolution(resolution):
-    w, h = resolution
-    max_dim = max(w, h)
-    if max_dim >= 3840:  # 4K+
-        return "50000k"
-    if max_dim >= 2560:  # QHD+
-        return "20000k"
-    if max_dim >= 1920:  # 1080p-Vertical (Shorts) or 1080p Horizontal
-        return "12000k"
-    return "8000k"
+    """Selects a video bitrate based on resolution."""
+    pixels = resolution[0] * resolution[1]
+    if pixels > 1920 * 1080: return "12000k"
+    if pixels > 1280 * 720: return "8000k"
+    return "5000k"
 
-# -------------------------------
-# Chunk rendering
-# -------------------------------
-def render_chunk(chunk_imgs, duration_per_image, bg_mode, blur_level, resolution, temp_dir, idx, animations=None):
-    start_time = time.time()
-    log_frame("🟢 Render", f"PID {os.getpid()} | Chunk {idx} | {len(chunk_imgs)} images", GREEN)
+def get_font_path():
+    """Finds a usable TrueType font on the system."""
+    if platform.system() == "Windows":
+        return "C:/Windows/Fonts/arial.ttf"
+    elif platform.system() == "Linux":
+        for path in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"]:
+            if os.path.exists(path):
+                return path
+    elif platform.system() == "Darwin": # macOS
+        return "/System/Library/Fonts/Supplemental/Arial.ttf"
+    return None # Fallback
 
-    base_clips = []
-    for img in chunk_imgs:
-        if img == "__BLACK__":
-            main_clip = ColorClip(size=resolution, color=(0, 0, 0)).set_duration(duration_per_image)
-        else:
-            main_clip = ImageClip(img).set_duration(duration_per_image)
+# ----------------------------------------
+# HYBRID TURBO PIPELINE (MAX SPEED)
+# ----------------------------------------
 
-        animated_clip = apply_image_animation(main_clip, duration_per_image, resolution, animations)
+def create_intro_frame(song_name, artist_name, background_image, resolution):
+    """Creates a single frame for the video intro with adaptive text."""
+    W, H = resolution
+    bg = background_image.resize((W, H), Image.LANCZOS).filter(ImageFilter.GaussianBlur(radius=15))
+    draw = ImageDraw.Draw(bg)
 
-        if bg_mode == "Blur" and img != "__BLACK__":
-            blur_path = create_blurred_background(img, resolution, blur_level, temp_dir)
-            bg_clip = ImageClip(blur_path).set_duration(duration_per_image)
-            frame_clip = CompositeVideoClip([bg_clip, animated_clip.set_position("center")], size=resolution)
-        elif bg_mode == "Darken" and img != "__BLACK__":
-            dark_path = create_darkened_background(img, resolution, blur_level, temp_dir)
-            bg_clip = ImageClip(dark_path).set_duration(duration_per_image)
-            frame_clip = CompositeVideoClip([bg_clip, animated_clip.set_position("center")], size=resolution)
-        else:
-            frame_clip = CompositeVideoClip(
-                [animated_clip.on_color(size=resolution, color=(0, 0, 0), pos=("center", "center"))],
-                size=resolution
-            )
-        frame_clip = frame_clip.set_duration(duration_per_image)
-        base_clips.append(frame_clip)
-
-    if not base_clips:
-        raise RuntimeError("No images for this chunk")
-
-    timeline = []
-    t_cursor = 0.0
-    first = base_clips[0].set_start(t_cursor)
-    timeline.append(first)
-    t_cursor += duration_per_image
-
-    for i in range(1, len(base_clips)):
-        prev = timeline[-1]
-        base_next = base_clips[i]
-        prev_timed, next_timed, td = apply_random_transition(prev, base_next, duration_per_image, resolution)
-        timeline[-1] = prev_timed
-        timeline.append(next_timed)
-        t_cursor += duration_per_image - td
-
-    final_chunk = CompositeVideoClip(timeline, size=resolution)
-    final_chunk = final_chunk.set_duration(t_cursor)
-
-    part_path = os.path.join(temp_dir, f"part_{idx}.mp4")
-    final_chunk.write_videofile(
-        part_path, fps=30, codec="libx264", audio=False,
-        preset="ultrafast", bitrate=select_bitrate_for_resolution(resolution),
-        threads=1, verbose=False, logger=None
-    )
-    final_chunk.close()
-    for c in base_clips:
-        try:
-            c.close()
-        except Exception:
-            pass
-
-    elapsed = time.time() - start_time
-    log_frame("✅ Render Done", f"Chunk {idx} → {os.path.basename(part_path)} ({elapsed:.1f}s)", GREEN)
-    return part_path
-
-# -------------------------------
-# Merge worker
-# -------------------------------
-def merge_worker(queue, concat_list_path, merged_path, total_chunks):
-    merged_count = 0
-    with open(concat_list_path, "w", encoding="utf-8") as f:
-        while True:
-            part_path = queue.get()
-            if part_path is None:
-                break
-            merged_count += 1
-            f.write(f"file '{part_path}'\n")
-            f.flush()
-            log_frame("🔵 Merge", f"Added {os.path.basename(part_path)} ({merged_count}/{total_chunks})", BLUE)
-
-    subprocess.run(
-        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list_path, "-c", "copy", merged_path],
-        check=True
-    )
-    log_frame("✅ Merge Done", f"Merged {total_chunks} chunks → {os.path.basename(merged_path)}", BLUE)
-
-# -------------------------------
-# Custom frame logger (manual progress)
-# -------------------------------
-class FrameLogger:
-    def __init__(self, total_frames=None, callback=None, tag="finalize"):
-        self.total_frames = max(1, int(total_frames or 1))
-        self.callback = callback
-        self.tag = tag
-
-    def log_message(self, msg: str):
-        print(msg)
-
-    def frame_callback(self, current_frame: int):
-        if self.callback:
-            percent = int(current_frame / self.total_frames * 100)
-            self.callback(percent, self.tag)
-
-def _monitor_video_progress(clip, logger: FrameLogger):
-    # Fire a coarse-grained progress based on wall-time sleep
-    total_frames = int(clip.duration * clip.fps)
-    total_frames = max(1, total_frames)
-    for i in range(total_frames):
-        time.sleep(1 / max(1, clip.fps))
-        logger.frame_callback(i + 1)
-
-# -------------------------------
-# Shared pipeline (one orientation)
-# -------------------------------
-def _build_single_output(mp3_path, images, song_name, artist_name, output_path,
-                         encoder, resolution, bg_mode, blur_level,
-                         animations, include_visualizer, visualizer_height,
-                         progress_callback=None, tag_prefix="youtube"):
-    """
-    Membangun satu output video (YouTube atau Shorts) dengan pipeline yang sama.
-    tag_prefix: "youtube" atau "shorts" → untuk label progress.
-    """
-    # Durasi per gambar
-    total_duration = AudioFileClip(mp3_path).duration
-    duration_per_image = total_duration / max(1, len(images))
-
-    song_text = f"{splitext(basename(mp3_path))[0]} - {artist_name}"
-    temp_dir = tempfile.mkdtemp(prefix=f"sikabayan_{tag_prefix}_")
-    merged_video_path = os.path.join(temp_dir, "merged.mp4")
-    concat_list_path = os.path.join(temp_dir, "concat.txt")
-    queue = Queue()
-
+    font_path = get_font_path()
+    
+    formatted_song_name = song_name.replace(" - ", "\n").strip()
+    max_text_width = W * 0.9
+    
+    title_font_size = int(W / 15) 
+    title_font = ImageFont.load_default()
     try:
-        total_cores = os.cpu_count() or 4
-        chunk_size = max(1, math.ceil(len(images) / total_cores))
-        chunks = [images[i:i + chunk_size] for i in range(0, len(images), chunk_size)]
+        title_font = ImageFont.truetype(font_path, title_font_size)
+        longest_line = max(formatted_song_name.split('\n'), key=lambda line: title_font.getbbox(line)[2])
+        while title_font.getbbox(longest_line)[2] > max_text_width:
+            title_font_size -= 2
+            title_font = ImageFont.truetype(font_path, title_font_size)
+            longest_line = max(formatted_song_name.split('\n'), key=lambda line: title_font.getbbox(line)[2])
+    except (IOError, AttributeError):
+        logger.warning(f"Font not found or failed to load at {font_path}. Using default.")
 
-        # Merge process
-        merger_proc = Process(target=merge_worker, args=(queue, concat_list_path, merged_video_path, len(chunks)))
-        merger_proc.start()
+    artist_font_size = int(W / 25)
+    artist_font = ImageFont.load_default()
+    try:
+        artist_font = ImageFont.truetype(font_path, artist_font_size)
+        while artist_font.getbbox(artist_name)[2] > max_text_width:
+            artist_font_size -= 1
+            artist_font = ImageFont.truetype(font_path, artist_font_size)
+    except (IOError, AttributeError):
+        pass
 
-        # Multi-process rendering
-        with ProcessPoolExecutor(max_workers=total_cores) as executor:
-            futures = {
-                executor.submit(
-                    render_chunk, chunk, duration_per_image, bg_mode,
-                    blur_level, resolution, temp_dir, idx, animations
-                ): idx for idx, chunk in enumerate(chunks)
-            }
+    y_cursor = H * 0.1
+    
+    title_bbox = draw.textbbox((0, 0), formatted_song_name, font=title_font, align="center")
+    title_w = title_bbox[2] - title_bbox[0]
+    title_h = title_bbox[3] - title_bbox[1]
+    draw.text(((W - title_w) / 2, y_cursor), formatted_song_name, font=title_font, fill="white", align="center")
+    y_cursor += title_h + int(H * 0.02)
 
-            for i, future in enumerate(tqdm(as_completed(futures), total=len(futures),
-                                            desc=f"Chunks-{tag_prefix}", unit="chunk")):
-                part_path = future.result()
-                queue.put(part_path)
-                if progress_callback:
-                    progress_callback((i + 1) * 40 // max(1, len(futures)), f"render_{tag_prefix}")
+    artist_bbox = draw.textbbox((0, 0), artist_name, font=artist_font)
+    artist_w = artist_bbox[2] - artist_bbox[0]
+    draw.text(((W - artist_w) / 2, y_cursor), artist_name, font=artist_font, fill=(200, 200, 200))
 
-        queue.put(None)
-        merger_proc.join()
+    return np.array(bg)
 
-        if progress_callback:
-            progress_callback(60, f"merge_{tag_prefix}")
 
-        # -------------------------------
-        # Overlay audio and visualizer
-        # -------------------------------
-        log_frame("🟡 Overlay", f"Starting final video creation... ({tag_prefix})", YELLOW)
-        if progress_callback:
-            progress_callback(70, f"overlay_{tag_prefix}")
+def generate_frames_task(args):
+    """A self-contained task for a worker process to generate a chunk of frames."""
+    (base_frames_chunk, start_frame_index, frames_per_image, 
+     trans_frames, frames_dir, is_last_chunk) = args
 
-        audio_clip = AudioFileClip(mp3_path)
-        base_video = VideoFileClip(merged_video_path).set_audio(audio_clip)
+    frame_index = start_frame_index
+    for i, current_frame_np in enumerate(base_frames_chunk):
+        is_last_image_in_video = is_last_chunk and (i == len(base_frames_chunk) - 1)
+        static_count = frames_per_image if is_last_image_in_video else (frames_per_image - trans_frames)
+        
+        for _ in range(static_count):
+            Image.fromarray(current_frame_np).save(os.path.join(frames_dir, f"frame_{frame_index:08d}.jpg"), format='JPEG', quality=95)
+            frame_index += 1
 
-        # Visualizer (posisi menempel bawah, tetap proporsional utk horizontal/vertical)
-        if include_visualizer:
-            vis_clip = generate_visualizer_clip(
-                mp3_path, fps=30, resolution=resolution,
-                opacity=0.5, scale_height=visualizer_height
-            )
-            video_h = resolution[1]
-            vis_height_px = video_h * visualizer_height
-            leftover_space = video_h - vis_height_px
-            offset_px = int(max(0, leftover_space * 0.15))
-            vis_y_pos = video_h - vis_height_px - offset_px
-            base_video = CompositeVideoClip(
-                [base_video, vis_clip.set_position(("center", vis_y_pos))],
-                size=resolution
-            )
+        if i + 1 < len(base_frames_chunk):
+            next_frame_np = base_frames_chunk[i + 1].astype(np.float32)
+            current_float_np = current_frame_np.astype(np.float32)
+            for k in range(trans_frames):
+                alpha = (k + 1) / float(trans_frames)
+                blended = ((1.0 - alpha) * current_float_np + alpha * next_frame_np)
+                Image.fromarray(blended.clip(0, 255).astype(np.uint8)).save(os.path.join(frames_dir, f"frame_{frame_index:08d}.jpg"), format='JPEG', quality=95)
+                frame_index += 1
+                
+    return frame_index - start_frame_index
 
-        # Text overlay (scrolling at bottom)
+
+def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix=""):
+    """Core rendering pipeline, now with intro and overlay capabilities."""
+    perf_summary = {}
+    mp3_path, images, output_path, resolution, bg_mode, blur_level, include_visualizer, visualizer_height, song_name, artist_name = (
+        settings["mp3_file"], settings["images"], settings["output_path"], settings["resolution"],
+        settings["bg_mode"], settings["blur_level"], settings["include_visualizer"], settings["visualizer_height"],
+        settings["song_name"], settings["artist_name"]
+    )
+    intro_duration = settings.get("intro_duration", 2)
+    scrolling_text = settings.get("scrolling_text", "")
+    
+    audio_clip = AudioFileClip(mp3_path)
+    total_duration = audio_clip.duration
+    audio_clip.close()
+    
+    fps = 30
+    if not images: images = ["__BLACK__"]
+    
+    main_content_duration = total_duration - intro_duration
+    if main_content_duration <= 0:
+        raise ValueError("Intro duration cannot be longer than the total audio duration.")
+
+    n_images = len(images)
+    duration_per_image = main_content_duration / n_images
+    trans_sec = max(0.25, min(1.0, duration_per_image * 0.25))
+    trans_frames = max(1, int(round(trans_sec * fps)))
+    frames_per_image = max(trans_frames + 1, int(round(duration_per_image * fps)))
+    total_frames_estimate = int(total_duration * fps)
+    intro_frames_count = int(intro_duration * fps)
+
+    start_time = time.time()
+    def _compose_base_frame(img_path: str) -> np.ndarray:
+        W, H = resolution
+        if img_path == "__BLACK__": return np.zeros((H, W, 3), dtype=np.uint8)
+        try: im = Image.open(img_path).convert("RGB")
+        except Exception: return np.zeros((H, W, 3), dtype=np.uint8)
+        bg = im.resize((W, H), Image.LANCZOS)
+        if bg_mode == "Blur": bg = bg.filter(ImageFilter.GaussianBlur(radius=blur_level))
+        elif bg_mode == "Darken": bg = Image.fromarray((np.array(bg) * (1.0 - blur_level / 10.0)).astype(np.uint8))
+        im.thumbnail((W, H), Image.LANCZOS)
+        canvas = bg.copy(); canvas.paste(im, ((W - im.width) // 2, (H - im.height) // 2))
+        return np.array(canvas)
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        base_frames = list(pool.map(_compose_base_frame, images))
+    perf_summary['Preprocess'] = time.time() - start_time
+    log_frame("🟢 Preprocess", f"{len(images)} images composited in {perf_summary['Preprocess']:.1f}s", GREEN)
+
+    start_time = time.time()
+    temp_dir = tempfile.mkdtemp(prefix=f"sikabayan_hybrid_{tag_prefix}_")
+    frames_dir = os.path.join(temp_dir, "frames")
+    os.makedirs(frames_dir, exist_ok=True)
+    
+    first_image_pil = Image.fromarray(base_frames[0])
+    intro_frame_np = create_intro_frame(song_name, artist_name, first_image_pil, resolution)
+    for i in range(intro_frames_count):
+        Image.fromarray(intro_frame_np).save(os.path.join(frames_dir, f"frame_{i:08d}.jpg"), format='JPEG', quality=95)
+
+    num_workers = MAX_WORKERS
+    chunk_size = math.ceil(len(base_frames) / num_workers)
+    tasks = []
+    frame_cursor = intro_frames_count
+    
+    for i in range(num_workers):
+        chunk = base_frames[i * chunk_size:(i + 1) * chunk_size]
+        if not chunk: continue
+        is_last_chunk = (i == num_workers - 1)
+        tasks.append((chunk, frame_cursor, frames_per_image, trans_frames, frames_dir, is_last_chunk))
+        num_images_in_chunk = len(chunk)
+        num_transitions_in_chunk = num_images_in_chunk if is_last_chunk else num_images_in_chunk -1
+        frame_cursor += num_images_in_chunk * frames_per_image - num_transitions_in_chunk * trans_frames
+
+    total_frames_written = intro_frames_count
+    with tqdm(total=total_frames_estimate, desc=f"🟢 Frames-{tag_prefix}", unit="frame", colour="green", initial=intro_frames_count) as pbar:
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            for written_count in executor.map(generate_frames_task, tasks):
+                total_frames_written += written_count
+                pbar.update(written_count)
+    
+    for i in range(num_workers - 1):
+        chunk_end_index = (i + 1) * chunk_size -1
+        if chunk_end_index >= len(base_frames) -1: continue
+        last_frame_of_chunk = base_frames[chunk_end_index]
+        first_frame_of_next_chunk = base_frames[chunk_end_index + 1]
+        transition_start_frame = intro_frames_count + (chunk_end_index + 1) * (frames_per_image - trans_frames)
+        current_float = last_frame_of_chunk.astype(np.float32)
+        next_float = first_frame_of_next_chunk.astype(np.float32)
+        for k in range(trans_frames):
+            alpha = (k + 1) / float(trans_frames)
+            blended = ((1.0 - alpha) * current_float + alpha * next_float)
+            frame_idx_to_overwrite = transition_start_frame + k
+            Image.fromarray(blended.clip(0, 255).astype(np.uint8)).save(os.path.join(frames_dir, f"frame_{frame_idx_to_overwrite:08d}.jpg"), format='JPEG', quality=95)
+
+    perf_summary['Frames'] = time.time() - start_time
+    log_frame("🟢 Frames", f"{total_frames_written} JPEG frames written in {perf_summary['Frames']:.1f}s", GREEN)
+
+    vis_frames_pattern = None
+    if include_visualizer:
+        start_time_vis = time.time()
         try:
-            text_clip = TextClip(song_text, fontsize=40, color="white", font="Arial-Bold")
-            text_width, text_height = text_clip.w, text_clip.h
-            scrolling_text = text_clip.set_position(
-                lambda t: (resolution[0] - (t * 100) % (text_width + resolution[0]),
-                           resolution[1] - text_height - 20)
-            ).set_duration(total_duration)
-            main_video = CompositeVideoClip([base_video, scrolling_text], size=resolution)
+            vis_frames_dir = os.path.join(temp_dir, "vis_frames")
+            os.makedirs(vis_frames_dir, exist_ok=True)
+            vis_frames_pattern = os.path.join(vis_frames_dir, "vis_frame_%08d.png")
+            
+            vis_clip = generate_visualizer_clip(mp3_path, fps, resolution, 0.6, float(str(visualizer_height).strip('%')) / 100.0)
+            vis_clip.write_images_sequence(vis_frames_pattern, fps=fps, verbose=False, logger=None)
+            vis_clip.close()
+            perf_summary['Visualizer'] = time.time() - start_time_vis
+            log_frame("🟡 Visualizer", f"Rendered PNG sequence in {perf_summary['Visualizer']:.1f}s", YELLOW)
         except Exception as e:
-            logger.warning(f"Text overlay failed ({tag_prefix}): {e}")
-            main_video = base_video
+            log_frame("⚠️ Visualizer", f"Skipping due to error: {e}", YELLOW)
+            vis_frames_pattern = None
 
-        # Intro Screen — ambil gambar pertama jika ada
-        base_name = os.path.splitext(os.path.basename(mp3_path))[0]
-        if images and images[0] != "__BLACK__":
-            bg_choice = images[0]
-            intro_bg = ImageClip(bg_choice).set_duration(2).resize(height=resolution[1])
-            intro_bg = intro_bg.on_color(size=resolution, color=(0, 0, 0), pos=("center", "center"))
-        else:
-            intro_bg = ColorClip(size=resolution, color=(0, 0, 0)).set_duration(2)
+    start_time = time.time()
+    enc_name, enc_opts = detect_best_encoder()
+    bitrate = select_bitrate_for_resolution(resolution)
+    frames_pattern = os.path.join(frames_dir, "frame_%08d.jpg")
+    
+    cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", frames_pattern, "-i", mp3_path]
+    
+    filter_complex_parts = []
+    current_video_stream = "[0:v]"
+    next_input_index = 2
 
-        title_clip = TextClip(base_name, fontsize=50, color="white", font="Arial-Bold") \
-            .set_position(("center", resolution[1] * 0.4)) \
-            .set_duration(2)
+    if vis_frames_pattern:
+        cmd.extend(["-framerate", str(fps), "-i", vis_frames_pattern])
+        vis_input_index = next_input_index
+        next_input_index += 1
+        vis_y_pos = resolution[1] - int(resolution[1] * (float(str(visualizer_height).strip('%')) / 100.0)) - int(resolution[1] * 0.05)
+        filter_complex_parts.append(f"{current_video_stream}[{vis_input_index}:v]overlay=x=(W-w)/2:y={vis_y_pos}[v_with_vis]")
+        current_video_stream = "[v_with_vis]"
 
-        artist_clip = TextClip(f"by {artist_name}", fontsize=35, color="white", font="Arial-Italic") \
-            .set_position(("center", resolution[1] * 0.55)) \
-            .set_duration(2)
+    if scrolling_text:
+        font_path = get_font_path()
+        if font_path:
+            escaped_font_path = font_path.replace('\\', '/').replace(':', '\\:')
+            font_size = int(resolution[1] / 25)
+            scroll_speed = 100
+            x_pos = f"w - mod(t*{scroll_speed}, w+tw)"
+            filter_complex_parts.append(f"{current_video_stream}drawtext=text='{scrolling_text}':fontfile='{escaped_font_path}':fontsize={font_size}:fontcolor=white@0.8:x={x_pos}:y=h-th-20[v_with_text]")
+            current_video_stream = "[v_with_text]"
+    
+    if filter_complex_parts:
+        cmd.extend(["-filter_complex", ";".join(filter_complex_parts)])
+        cmd.extend(["-map", current_video_stream])
+    else:
+         cmd.extend(["-map", "0:v"])
 
-        intro = CompositeVideoClip([intro_bg, title_clip, artist_clip], size=resolution)
-        final_video = concatenate_videoclips([intro, main_video])
+    cmd.extend(["-map", "1:a"])
+    cmd.extend(["-pix_fmt", "yuv420p", "-shortest", "-c:a", "aac", "-b:a", "192k", "-c:v", enc_name])
+    for key, value in enc_opts.items(): cmd.extend([f"-{key}", str(value)])
+    cmd.extend(["-b:v", bitrate, output_path])
+    
+    log_frame("🟡 Encode", f"Using {enc_name} @ {bitrate}", YELLOW)
+    process = subprocess.Popen(cmd, stderr=subprocess.PIPE, universal_newlines=True)
+    with tqdm(total=total_frames_estimate, desc=f"🟡 Encode-{tag_prefix}", unit="frame", colour="yellow") as pbar:
+        for line in process.stderr:
+            if match := re.search(r"frame=\s*(\d+)", line):
+                pbar.update(int(match.group(1)) - pbar.n)
+    process.wait()
+    if process.returncode != 0: raise subprocess.CalledProcessError(process.returncode, cmd)
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    perf_summary['Encode'] = time.time() - start_time
+    log_frame("🟡 Encode", f"Finished in {perf_summary['Encode']:.1f}s", YELLOW)
+    
+    save_disclaimer(mp3_path, artist_name, output_path)
+    return perf_summary
 
-        # Save video
-        log_frame("💾 Save", f"Writing final video → {output_path}", YELLOW)
-        if progress_callback:
-            progress_callback(90, f"finalize_{tag_prefix}")
-
-        # Manual monitor progress (MoviePy tidak punya 'callbacks' arg)
-        total_frames = int(final_video.duration * 30)
-        frame_logger = FrameLogger(total_frames=total_frames,
-                                   callback=lambda p, tag: progress_callback(p, tag) if progress_callback else None,
-                                   tag=f"finalize_{tag_prefix}")
-        monitor_thread = Thread(target=_monitor_video_progress, args=(final_video, frame_logger))
-        monitor_thread.daemon = True
-        monitor_thread.start()
-
-        final_video.write_videofile(
-            output_path,
-            fps=30,
-            codec=encoder,
-            preset="medium",
-            bitrate=select_bitrate_for_resolution(resolution),
-            audio_codec="aac",
-            threads=os.cpu_count() or 4,
-            verbose=False,
-            logger=None
-        )
-        monitor_thread.join()
-
-        final_video.close()
-        audio_clip.close()
-
-        save_disclaimer(mp3_path, artist_name, output_path)
-        log_frame("✅ Done", f"Video created successfully: {output_path}", GREEN)
-        if progress_callback:
-            progress_callback(100, f"finalize_{tag_prefix}")
-
-    except Exception as e:
-        logger.error(f"Error during single output build ({tag_prefix}): {e}", exc_info=True)
-        if progress_callback:
-            progress_callback(0, f"error_{tag_prefix}")
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
 
 # -------------------------------
-# Build video (DICT VERSION) — YouTube & Shorts
+# PUBLIC ENTRY POINT
 # -------------------------------
 def build_video_multithread(settings, progress_callback=None):
-    """
-    Build video menggunakan settings dict:
-    Wajib:
-      - mp3_file, song_name, artist_name, output_folder
-    Opsional:
-      - bg_folder, cover_image (tidak dipakai di pipeline), resolution (untuk YouTube)
-      - export_youtube (bool, default True)
-      - export_shorts  (bool, default False)
-      - bg_mode: "Blur"|"Darken"|else (default "Blur")
-      - blur_level: int (default 3)
-      - animations: dict/None
-      - include_visualizer: bool (default False)
-      - visualizer_height: "40%" atau float [0..1] (default "40%")
-      - shorts_resolution: tuple (default (1080, 1920))
-    Progress stages:
-      - setup, render_youtube, merge_youtube, overlay_youtube, finalize_youtube
-      - render_shorts, merge_shorts, overlay_shorts, finalize_shorts
-      - error_youtube / error_shorts
-    """
-    # --- unpack dict ---
-    mp3_path       = settings["mp3_file"]
-    bg_folder      = settings.get("bg_folder")
-    # cover_path   = settings.get("cover_image")  # tidak dipakai saat ini
-    song_name      = settings["song_name"]
-    artist_name    = settings["artist_name"]
-    output_folder  = settings["output_folder"]
-
-    # Flags export
+    """Public entry point that orchestrates concurrent video builds."""
+    song_name = settings["song_name"]
+    output_folder = settings["output_folder"]
     export_youtube = settings.get("export_youtube", True)
-    export_shorts  = settings.get("export_shorts", False)
+    export_shorts = settings.get("export_shorts", False)
+    
+    try: res_parts = settings.get("resolution", (1280, 720)); yt_resolution = (int(res_parts[0]), int(res_parts[1]))
+    except: yt_resolution = (1280, 720)
+    shorts_resolution = tuple(settings.get("shorts_resolution", (1080, 1920)))
 
-    # Resolusi
-    yt_resolution      = tuple(settings.get("resolution", (1280, 720)))
-    shorts_resolution  = tuple(settings.get("shorts_resolution", (1080, 1920)))
-
-    bg_mode            = settings.get("bg_mode", "Blur")
-    blur_level         = settings.get("blur_level", 3)
-    animations         = settings.get("animations", None)
-    include_visualizer = settings.get("include_visualizer", False)
-    vis_h_raw          = settings.get("visualizer_height", "40%")
-    visualizer_height  = float(str(vis_h_raw).strip("%")) / 100.0
-
-    if progress_callback:
-        progress_callback(0, "setup")
-
-    # Encoder & ImageMagick
-    try:
-        encoder = check_ffmpeg_encoders()
-        logger.info(f"Using video encoder: {encoder}")
-    except Exception as e:
-        logger.error(f"Encoder initialization failed: {str(e)}")
-        if progress_callback:
-            progress_callback(0, "error_setup")
-        return
-
-    if not configure_imagemagick():
-        logger.warning("Proceeding without ImageMagick - text rendering may not work")
-
-    # Background images
-    if not bg_folder or not os.path.isdir(bg_folder):
-        images = ["__BLACK__"]
-    else:
-        try:
-            images = list_images(bg_folder)
-            if not images:
-                images = ["__BLACK__"]
-        except Exception:
-            images = ["__BLACK__"]
-
-    # Pastikan folder output ada
+    check_ffmpeg(); configure_imagemagick()
+    images = list_images(settings.get("bg_folder")) if settings.get("bg_folder") and os.path.isdir(settings.get("bg_folder")) else ["__BLACK__"]
+    if not images: images = ["__BLACK__"]
     os.makedirs(output_folder, exist_ok=True)
 
-    # Output paths
-    yt_output_path     = os.path.join(output_folder, f"{song_name}.mp4")
-    shorts_output_path = os.path.join(output_folder, f"{song_name}_Shorts.mp4")
+    tasks_to_run = []
+    if export_youtube:
+        yt_settings = settings.copy()
+        yt_settings.update({"images": images, "output_path": os.path.join(output_folder, f"{song_name}.mp4"), "resolution": yt_resolution})
+        tasks_to_run.append(("youtube", yt_settings))
+    if export_shorts:
+        shorts_settings = settings.copy()
+        shorts_settings.update({"images": images, "output_path": os.path.join(output_folder, f"{song_name}_Shorts.mp4"), "resolution": shorts_resolution})
+        tasks_to_run.append(("shorts", shorts_settings))
 
-    try:
-        # YouTube
-        if export_youtube:
-            _build_single_output(
-                mp3_path=mp3_path,
-                images=images,
-                song_name=song_name,
-                artist_name=artist_name,
-                output_path=yt_output_path,
-                encoder=encoder,
-                resolution=yt_resolution,
-                bg_mode=bg_mode,
-                blur_level=blur_level,
-                animations=animations,
-                include_visualizer=include_visualizer,
-                visualizer_height=visualizer_height,
-                progress_callback=progress_callback,
-                tag_prefix="youtube"
-            )
+    overall_start_time = time.time()
+    log_frame("🚀 Process Start", f"Started at: {datetime.fromtimestamp(overall_start_time).strftime('%Y/%m/%d %H:%M:%S')}", BLUE)
 
-        # Shorts (9:16)
-        if export_shorts:
-            _build_single_output(
-                mp3_path=mp3_path,
-                images=images,
-                song_name=song_name,
-                artist_name=artist_name,
-                output_path=shorts_output_path,
-                encoder=encoder,
-                resolution=shorts_resolution,
-                bg_mode=bg_mode,
-                blur_level=blur_level,
-                animations=animations,
-                include_visualizer=include_visualizer,
-                visualizer_height=visualizer_height,
-                progress_callback=progress_callback,
-                tag_prefix="shorts"
-            )
+    all_summaries = []
+    with ThreadPoolExecutor(max_workers=min(len(tasks_to_run), MAX_WORKERS) or 1) as executor:
+        futures = {executor.submit(_build_single_output_hybrid, task_settings, tag): (tag, task_settings) for tag, task_settings in tasks_to_run}
+        for future in as_completed(futures):
+            tag, task_settings = futures[future]
+            try:
+                perf_summary = future.result()
+                all_summaries.append((tag, task_settings["song_name"], perf_summary))
+            except Exception as e:
+                logger.error(f"Error building '{tag}' video: {e}", exc_info=True)
 
-        # Selesai semua
-        if progress_callback:
-            progress_callback(100, "done")
+    overall_end_time = time.time()
 
-    except Exception as e:
-        logger.error(f"Error during build_video_multithread: {e}", exc_info=True)
-        if progress_callback:
-            progress_callback(0, "error")
+    # --- Final Summary Section ---
+    log_frame("📊 Overall Summary", "All tasks completed.", CYAN)
+    tqdm.write(f"  Start Time: {datetime.fromtimestamp(overall_start_time).strftime('%Y/%m/%d %H:%M:%S')}")
+    tqdm.write(f"  End Time  : {datetime.fromtimestamp(overall_end_time).strftime('%Y/%m/%d %H:%M:%S')}")
+    tqdm.write(f"  Total Duration: {overall_end_time - overall_start_time:.1f}s")
+
+    for tag, name, summary in sorted(all_summaries):
+        total_task_time = sum(summary.values())
+        tqdm.write(f"\n  --- Breakdown for {tag.capitalize()} [{name}] ({total_task_time:.1f}s) ---")
+        for stage, duration in summary.items():
+            tqdm.write(f"   - {stage:<12}: {duration:.1f}s")
+            
+    tqdm.write("\nProcess done!!!")
