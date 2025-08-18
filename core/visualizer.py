@@ -10,7 +10,7 @@ import matplotlib.patheffects as path_effects
 from tqdm import tqdm
 
 # --- Resource Management ---
-CPU_USAGE_PERCENT = 0.80 
+CPU_USAGE_PERCENT = 0.50 
 MAX_WORKERS = max(1, int(os.cpu_count() * CPU_USAGE_PERCENT))
 
 class Band:
@@ -115,7 +115,8 @@ def _render_frame_chunk(args):
         buf = buf[:, :, [1, 2, 3, 0]]
         rendered_frames.append(buf)
         
-    return rendered_frames
+    # Return the starting index along with the frames to allow for correct sorting
+    return (frame_indices[0], rendered_frames)
 
 def generate_visualizer_clip(mp3_path: str, fps: int = 30, resolution=(1280, 720),
                               opacity=0.5, scale_height=0.2):
@@ -133,22 +134,21 @@ def generate_visualizer_clip(mp3_path: str, fps: int = 30, resolution=(1280, 720
     
     tasks = [(chunk, mp3_path, bands, resolution, opacity, scale_height, fps) for chunk in frame_chunks]
     
-    all_frames = []
+    results = [None] * len(tasks)
     with tqdm(total=total_frames, desc="🟡 Rendering Visualizer", unit="frame", colour="yellow") as pbar:
         with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
             # Submit all tasks and store futures
-            futures = [executor.submit(_render_frame_chunk, task) for task in tasks]
+            futures = {executor.submit(_render_frame_chunk, task): i for i, task in enumerate(tasks)}
             
             # Process results as they complete
             for future in as_completed(futures):
-                rendered_chunk = future.result()
-                all_frames.extend(rendered_chunk)
+                idx = futures[future]
+                start_index, rendered_chunk = future.result()
+                results[idx] = rendered_chunk
                 pbar.update(len(rendered_chunk))
 
-    # The results might be out of order, so we create a clip from the full list
-    # A more robust implementation would sort them, but as_completed often returns them roughly in order.
-    # For perfect order, one would map results back to their original chunk index.
-    # However, for a visualizer, minor frame misordering is usually imperceptible.
+    # Flatten the list of lists into a single list of frames, now in correct order
+    all_frames = [frame for chunk in results for frame in chunk]
     
     clip = ImageSequenceClip(all_frames, fps=fps).set_duration(duration)
     return clip

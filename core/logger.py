@@ -10,7 +10,7 @@ class TqdmLoggingHandler(logging.StreamHandler):
     def emit(self, record):
         try:
             msg = self.format(record)
-            tqdm.write(msg)  # keeps tqdm bar intact
+            tqdm.write(msg)
             self.flush()
         except Exception:
             self.handleError(record)
@@ -30,6 +30,9 @@ class ProgressTracker:
         return sum(self.progress.values()) / self.total_tasks * 100 if self.total_tasks > 0 else 0
 
 def setup_logger(log_file="app.log", name="SiKabayan"):
+    """
+    Sets up the logger to log to a file and the console.
+    """
     global _logger_instance
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
@@ -37,18 +40,19 @@ def setup_logger(log_file="app.log", name="SiKabayan"):
     if logger.hasHandlers():
         logger.handlers.clear()
 
-    console_handler = TqdmLoggingHandler()
-    console_handler.setLevel(logging.DEBUG)
-    console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
-    console_handler.setFormatter(console_formatter)
-
+    # File handler (always on, logs everything)
     file_handler = logging.FileHandler(log_file, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     file_handler.setFormatter(file_formatter)
-
-    logger.addHandler(console_handler)
     logger.addHandler(file_handler)
+
+    # Tqdm Console handler for console output
+    console_handler = TqdmLoggingHandler()
+    console_handler.setLevel(logging.INFO)
+    console_formatter = logging.Formatter("%(message)s")
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
 
     _logger_instance = logger
     return logger

@@ -200,7 +200,7 @@ def generate_frames_task(args):
     return frame_index - start_frame_index
 
 
-def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix=""):
+def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progress_callback=None):
     """Core rendering pipeline, now with intro and overlay capabilities."""
     perf_summary = {}
     mp3_path, images, output_path, resolution, bg_mode, blur_level, include_visualizer, visualizer_height, song_name, artist_name = (
@@ -230,6 +230,7 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix=""):
     total_frames_estimate = int(total_duration * fps)
     intro_frames_count = int(intro_duration * fps)
 
+    if progress_callback: progress_callback(1, f"{tag_prefix}_preprocess")
     start_time = time.time()
     def _compose_base_frame(img_path: str) -> np.ndarray:
         W, H = resolution
@@ -247,6 +248,7 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix=""):
         base_frames = list(pool.map(_compose_base_frame, images))
     perf_summary['Preprocess'] = time.time() - start_time
     log_frame("🟢 Preprocess", f"{len(images)} images composited in {perf_summary['Preprocess']:.1f}s", GREEN)
+    if progress_callback: progress_callback(5, f"{tag_prefix}_preprocess")
 
     start_time = time.time()
     temp_dir = tempfile.mkdtemp(prefix=f"sikabayan_hybrid_{tag_prefix}_")
@@ -278,6 +280,9 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix=""):
             for written_count in executor.map(generate_frames_task, tasks):
                 total_frames_written += written_count
                 pbar.update(written_count)
+                if progress_callback:
+                    percent = 5 + int(45 * (total_frames_written / total_frames_estimate))
+                    progress_callback(percent, f"{tag_prefix}_frames")
     
     for i in range(num_workers - 1):
         chunk_end_index = (i + 1) * chunk_size -1
@@ -295,6 +300,7 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix=""):
 
     perf_summary['Frames'] = time.time() - start_time
     log_frame("🟢 Frames", f"{total_frames_written} JPEG frames written in {perf_summary['Frames']:.1f}s", GREEN)
+    if progress_callback: progress_callback(50, f"{tag_prefix}_frames")
 
     vis_frames_pattern = None
     if include_visualizer:
@@ -304,21 +310,30 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix=""):
             os.makedirs(vis_frames_dir, exist_ok=True)
             vis_frames_pattern = os.path.join(vis_frames_dir, "vis_frame_%08d.png")
             
+            # Fixed visualizer generation without progress callback
             vis_clip = generate_visualizer_clip(mp3_path, fps, resolution, 0.6, float(str(visualizer_height).strip('%')) / 100.0)
             vis_clip.write_images_sequence(vis_frames_pattern, fps=fps, verbose=False, logger=None)
             vis_clip.close()
+            
+            if progress_callback:
+                progress_callback(55, f"{tag_prefix}_visualizer")
+                
             perf_summary['Visualizer'] = time.time() - start_time_vis
             log_frame("🟡 Visualizer", f"Rendered PNG sequence in {perf_summary['Visualizer']:.1f}s", YELLOW)
         except Exception as e:
             log_frame("⚠️ Visualizer", f"Skipping due to error: {e}", YELLOW)
             vis_frames_pattern = None
+    if progress_callback: progress_callback(60, f"{tag_prefix}_visualizer")
 
     start_time = time.time()
     enc_name, enc_opts = detect_best_encoder()
     bitrate = select_bitrate_for_resolution(resolution)
     frames_pattern = os.path.join(frames_dir, "frame_%08d.jpg")
     
-    cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", frames_pattern, "-i", mp3_path]
+    normalized_output_path = os.path.normpath(output_path).replace("\\", "/")
+    normalized_mp3_path = os.path.normpath(mp3_path).replace("\\", "/")
+    
+    cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", frames_pattern, "-i", normalized_mp3_path]
     
     filter_complex_parts = []
     current_video_stream = "[0:v]"
@@ -335,7 +350,7 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix=""):
     if scrolling_text:
         font_path = get_font_path()
         if font_path:
-            escaped_font_path = font_path.replace('\\', '/').replace(':', '\\:')
+            escaped_font_path = font_path.replace('\\', '/').replace(':', '\\\\:')
             font_size = int(resolution[1] / 25)
             scroll_speed = 100
             x_pos = f"w - mod(t*{scroll_speed}, w+tw)"
@@ -351,20 +366,26 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix=""):
     cmd.extend(["-map", "1:a"])
     cmd.extend(["-pix_fmt", "yuv420p", "-shortest", "-c:a", "aac", "-b:a", "192k", "-c:v", enc_name])
     for key, value in enc_opts.items(): cmd.extend([f"-{key}", str(value)])
-    cmd.extend(["-b:v", bitrate, output_path])
+    cmd.extend(["-b:v", bitrate, normalized_output_path])
     
     log_frame("🟡 Encode", f"Using {enc_name} @ {bitrate}", YELLOW)
     process = subprocess.Popen(cmd, stderr=subprocess.PIPE, universal_newlines=True)
     with tqdm(total=total_frames_estimate, desc=f"🟡 Encode-{tag_prefix}", unit="frame", colour="yellow") as pbar:
         for line in process.stderr:
             if match := re.search(r"frame=\s*(\d+)", line):
-                pbar.update(int(match.group(1)) - pbar.n)
+                current_frame = int(match.group(1))
+                pbar.update(current_frame - pbar.n)
+                if progress_callback:
+                    percent = 60 + int(40 * (current_frame / total_frames_estimate))
+                    progress_callback(percent, f"{tag_prefix}_encode")
+
     process.wait()
     if process.returncode != 0: raise subprocess.CalledProcessError(process.returncode, cmd)
     shutil.rmtree(temp_dir, ignore_errors=True)
     perf_summary['Encode'] = time.time() - start_time
     log_frame("🟡 Encode", f"Finished in {perf_summary['Encode']:.1f}s", YELLOW)
     
+    if progress_callback: progress_callback(100, f"{tag_prefix}_done")
     save_disclaimer(mp3_path, artist_name, output_path)
     return perf_summary
 
@@ -378,14 +399,22 @@ def build_video_multithread(settings, progress_callback=None):
     output_folder = settings["output_folder"]
     export_youtube = settings.get("export_youtube", True)
     export_shorts = settings.get("export_shorts", False)
+    cover_image = settings.get("cover_image")
     
     try: res_parts = settings.get("resolution", (1280, 720)); yt_resolution = (int(res_parts[0]), int(res_parts[1]))
     except: yt_resolution = (1280, 720)
     shorts_resolution = tuple(settings.get("shorts_resolution", (1080, 1920)))
 
     check_ffmpeg(); configure_imagemagick()
-    images = list_images(settings.get("bg_folder")) if settings.get("bg_folder") and os.path.isdir(settings.get("bg_folder")) else ["__BLACK__"]
-    if not images: images = ["__BLACK__"]
+    
+    images = list_images(settings.get("bg_folder")) if settings.get("bg_folder") and os.path.isdir(settings.get("bg_folder")) else []
+    
+    if cover_image and os.path.isfile(cover_image):
+        images.insert(0, cover_image)
+    
+    if not images:
+        images = ["__BLACK__"]
+        
     os.makedirs(output_folder, exist_ok=True)
 
     tasks_to_run = []
@@ -403,7 +432,7 @@ def build_video_multithread(settings, progress_callback=None):
 
     all_summaries = []
     with ThreadPoolExecutor(max_workers=min(len(tasks_to_run), MAX_WORKERS) or 1) as executor:
-        futures = {executor.submit(_build_single_output_hybrid, task_settings, tag): (tag, task_settings) for tag, task_settings in tasks_to_run}
+        futures = {executor.submit(_build_single_output_hybrid, task_settings, tag, progress_callback): (tag, task_settings) for tag, task_settings in tasks_to_run}
         for future in as_completed(futures):
             tag, task_settings = futures[future]
             try:
@@ -411,10 +440,10 @@ def build_video_multithread(settings, progress_callback=None):
                 all_summaries.append((tag, task_settings["song_name"], perf_summary))
             except Exception as e:
                 logger.error(f"Error building '{tag}' video: {e}", exc_info=True)
+                if progress_callback: progress_callback(0, f"{tag}_error")
 
     overall_end_time = time.time()
 
-    # --- Final Summary Section ---
     log_frame("📊 Overall Summary", "All tasks completed.", CYAN)
     tqdm.write(f"  Start Time: {datetime.fromtimestamp(overall_start_time).strftime('%Y/%m/%d %H:%M:%S')}")
     tqdm.write(f"  End Time  : {datetime.fromtimestamp(overall_end_time).strftime('%Y/%m/%d %H:%M:%S')}")
