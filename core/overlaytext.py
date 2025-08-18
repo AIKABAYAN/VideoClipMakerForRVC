@@ -1,6 +1,7 @@
 # overlaytext.py
 import os
 import shutil
+import subprocess
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
 from core.logger import get_logger
 
@@ -8,62 +9,78 @@ logger = get_logger("sikabayan")
 
 def apply_scrolling_text_overlay(input_video_path, output_video_path, song_text, total_duration, resolution, encoder_name, encoder_opts, bitrate):
     """
-    Menambahkan teks overlay berjalan ke file video yang sudah ada menggunakan MoviePy.
+    Menambahkan teks overlay berjalan ke file video yang sudah ada menggunakan FFmpeg secara langsung untuk performa maksimal.
+    Catatan: Argumen 'total_duration' dan 'encoder_opts' tidak digunakan dalam implementasi ini.
 
     Args:
         input_video_path (str): Path ke video input.
         output_video_path (str): Path untuk menyimpan video output.
         song_text (str): Teks yang akan berjalan.
-        total_duration (float): Durasi total video.
+        total_duration (float): Durasi total video (tidak digunakan).
         resolution (tuple): Resolusi video (lebar, tinggi).
-        encoder_name (str): Nama encoder FFmpeg yang akan digunakan.
-        encoder_opts (dict): Opsi untuk encoder.
+        encoder_name (str): Nama encoder FFmpeg yang akan digunakan (misalnya, 'libx264', 'h264_nvenc').
+        encoder_opts (dict): Opsi untuk encoder (tidak digunakan, preset 'fast' digunakan secara default).
         bitrate (str): Bitrate video.
     """
-    base_video = None
-    main_video = None
     try:
-        logger.info("Memulai proses overlay teks dengan MoviePy...")
-        
-        # Muat video yang sudah dirender sebagai dasar
-        base_video = VideoFileClip(input_video_path)
+        logger.info("Memulai proses overlay teks dengan FFmpeg langsung (Performa Tinggi)...")
 
-        # Tetapkan kecepatan gulir tetap (misalnya, 150 piksel per detik)
-        scroll_speed = 150 
+        # Amankan teks untuk digunakan dalam command line
+        sanitized_text = song_text.replace("'", "'\\''")
 
-        # Buat klip teks
-        text_clip = TextClip(song_text, fontsize=40, color="white", font="Arial-Bold")
-        text_width, text_height = text_clip.w, text_clip.h
+        # Kecepatan gulir dalam piksel per detik
+        scroll_speed = 150
         
-        # Logika posisi baru berdasarkan kecepatan tetap
-        scrolling_text = text_clip.set_position(
-            lambda t: (resolution[0] - (t * scroll_speed) % (text_width + resolution[0]),
-                       resolution[1] - text_height - 20)
-        ).set_duration(total_duration)
+        # Ukuran font dan margin dari bawah
+        fontsize = int(resolution[1] * 0.05)
+        margin_bottom = 20
 
-        # Gabungkan video dasar dengan teks berjalan
-        main_video = CompositeVideoClip([base_video, scrolling_text], size=resolution)
-        
-        # Tulis video final dengan audio dari video dasar
-        main_video.write_videofile(
-            output_video_path,
-            codec=encoder_name,
-            bitrate=bitrate,
-            audio=base_video.audio, # Gunakan audio dari video asli
-            threads=os.cpu_count(),
-            preset=encoder_opts.get("preset", "ultrafast"),
-            logger='bar'
+        # Konstruksi filter `drawtext` FFmpeg.
+        # x='w-mod(t*speed,w+text_w)' menciptakan efek gulir dari kanan ke kiri.
+        video_filter = (
+            f"drawtext="
+            f"fontfile='/path/to/your/font/Arial.ttf':"  # PENTING: Ganti dengan path font yang valid
+            f"text='{sanitized_text}':"
+            f"fontsize={fontsize}:"
+            f"fontcolor=white:"
+            f"y=h-th-{margin_bottom}:"
+            f"x='w-mod(t*{scroll_speed},w+text_w)'"
         )
-        logger.info("Proses overlay teks MoviePy selesai.")
+        
+        # Perintah FFmpeg
+        # -c:a copy: Salin stream audio tanpa re-encoding (sangat cepat)
+        command = [
+            'ffmpeg',
+            '-i', input_video_path,
+            '-vf', video_filter,
+            '-c:v', encoder_name,
+            '-b:v', bitrate,
+            '-preset', 'fast',
+            '-c:a', 'copy',
+            '-y', # Timpa file output jika sudah ada
+            output_video_path
+        ]
+        
+        # Jalankan perintah FFmpeg. check=True akan memunculkan error jika FFmpeg gagal.
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        
+        logger.info("Proses overlay teks FFmpeg selesai.")
 
-    except Exception as e:
-        logger.error(f"Gagal menambahkan teks overlay dengan MoviePy: {e}", exc_info=True)
-        # Jika gagal, salin saja video asli tanpa overlay
+    except subprocess.CalledProcessError as e:
+        # Menangkap error spesifik dari FFmpeg dan menampilkannya di log
+        logger.error(f"Gagal menambahkan teks overlay dengan FFmpeg. Error: {e.stderr}", exc_info=True)
         if not os.path.exists(output_video_path):
             shutil.copy(input_video_path, output_video_path)
-    finally:
-        # Pastikan semua klip ditutup untuk melepaskan file
-        if base_video:
-            base_video.close()
-        if main_video:
-            main_video.close()
+    except Exception as e:
+        logger.error(f"Terjadi kesalahan tak terduga: {e}", exc_info=True)
+        if not os.path.exists(output_video_path):
+            shutil.copy(input_video_path, output_video_path)
+
+# --- PENTING ---
+# Anda harus mengganti '/path/to/your/font/Arial.ttf' dengan path
+# yang benar ke file font di sistem Anda.
+#
+# Contoh Path Font:
+# - Windows: 'C\\:/Windows/Fonts/arialbd.ttf'
+# - Linux:   '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf'
+# - macOS:   '/System/Library/Fonts/Supplemental/Arial Bold.ttf'
