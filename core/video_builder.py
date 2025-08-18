@@ -28,6 +28,7 @@ from tqdm import tqdm
 # These modules are project-specific; keep them as-is
 from core.visualizer import generate_visualizer_clip
 from .disclaimer_builder import save_disclaimer
+from .overlaytext import apply_scrolling_text_overlay # <-- Diimpor dari file baru
 
 logger = get_logger("sikabayan")
 
@@ -310,7 +311,6 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
             os.makedirs(vis_frames_dir, exist_ok=True)
             vis_frames_pattern = os.path.join(vis_frames_dir, "vis_frame_%08d.png")
             
-            # Fixed visualizer generation without progress callback
             vis_clip = generate_visualizer_clip(mp3_path, fps, resolution, 0.6, float(str(visualizer_height).strip('%')) / 100.0)
             vis_clip.write_images_sequence(vis_frames_pattern, fps=fps, verbose=False, logger=None)
             vis_clip.close()
@@ -330,10 +330,10 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
     bitrate = select_bitrate_for_resolution(resolution)
     frames_pattern = os.path.join(frames_dir, "frame_%08d.jpg")
     
-    normalized_output_path = os.path.normpath(output_path).replace("\\", "/")
-    normalized_mp3_path = os.path.normpath(mp3_path).replace("\\", "/")
+    # Render video tanpa overlay terlebih dahulu ke file sementara
+    temp_output_path = os.path.join(temp_dir, "temp_video.mp4")
     
-    cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", frames_pattern, "-i", normalized_mp3_path]
+    cmd = ["ffmpeg", "-y", "-framerate", str(fps), "-i", frames_pattern, "-i", mp3_path]
     
     filter_complex_parts = []
     current_video_stream = "[0:v]"
@@ -347,16 +347,6 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
         filter_complex_parts.append(f"{current_video_stream}[{vis_input_index}:v]overlay=x=(W-w)/2:y={vis_y_pos}[v_with_vis]")
         current_video_stream = "[v_with_vis]"
 
-    if scrolling_text:
-        font_path = get_font_path()
-        if font_path:
-            escaped_font_path = font_path.replace('\\', '/').replace(':', '\\\\:')
-            font_size = int(resolution[1] / 25)
-            scroll_speed = 100
-            x_pos = f"w - mod(t*{scroll_speed}, w+tw)"
-            filter_complex_parts.append(f"{current_video_stream}drawtext=text='{scrolling_text}':fontfile='{escaped_font_path}':fontsize={font_size}:fontcolor=white@0.8:x={x_pos}:y=h-th-20[v_with_text]")
-            current_video_stream = "[v_with_text]"
-    
     if filter_complex_parts:
         cmd.extend(["-filter_complex", ";".join(filter_complex_parts)])
         cmd.extend(["-map", current_video_stream])
@@ -366,24 +356,54 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
     cmd.extend(["-map", "1:a"])
     cmd.extend(["-pix_fmt", "yuv420p", "-shortest", "-c:a", "aac", "-b:a", "192k", "-c:v", enc_name])
     for key, value in enc_opts.items(): cmd.extend([f"-{key}", str(value)])
-    cmd.extend(["-b:v", bitrate, normalized_output_path])
+    cmd.extend(["-b:v", bitrate, temp_output_path])
     
-    log_frame("🟡 Encode", f"Using {enc_name} @ {bitrate}", YELLOW)
-    process = subprocess.Popen(cmd, stderr=subprocess.PIPE, universal_newlines=True)
-    with tqdm(total=total_frames_estimate, desc=f"🟡 Encode-{tag_prefix}", unit="frame", colour="yellow") as pbar:
-        for line in process.stderr:
-            if match := re.search(r"frame=\s*(\d+)", line):
-                current_frame = int(match.group(1))
-                pbar.update(current_frame - pbar.n)
-                if progress_callback:
-                    percent = 60 + int(40 * (current_frame / total_frames_estimate))
-                    progress_callback(percent, f"{tag_prefix}_encode")
+    log_frame("🟡 Encode", f"Using {enc_name} @ {bitrate} (pass 1)", YELLOW)
+    
+    try:
+        process = subprocess.Popen(cmd, stderr=subprocess.PIPE, universal_newlines=True, encoding="utf-8")
+        with tqdm(total=total_frames_estimate, desc=f"🟡 Encode-{tag_prefix}", unit="frame", colour="yellow") as pbar:
+            for line in process.stderr:
+                if match := re.search(r"frame=\s*(\d+)", line):
+                    current_frame = int(match.group(1))
+                    pbar.update(current_frame - pbar.n)
+                    if progress_callback:
+                        percent = 60 + int(35 * (current_frame / total_frames_estimate))
+                        progress_callback(percent, f"{tag_prefix}_encode")
+        
+        process.wait()
+        if process.returncode != 0:
+            raise subprocess.CalledProcessError(process.returncode, cmd, stderr=process.stderr.read())
+            
+    except subprocess.CalledProcessError as e:
+        logger.error("--- FFmpeg Command Failed ---")
+        logger.error(f"Command: {' '.join(e.cmd)}")
+        logger.error(f"Stderr: {e.stderr}")
+        raise
 
-    process.wait()
-    if process.returncode != 0: raise subprocess.CalledProcessError(process.returncode, cmd)
-    shutil.rmtree(temp_dir, ignore_errors=True)
     perf_summary['Encode'] = time.time() - start_time
-    log_frame("🟡 Encode", f"Finished in {perf_summary['Encode']:.1f}s", YELLOW)
+    
+    # --- Tahap Overlay MoviePy ---
+    if scrolling_text:
+        start_overlay_time = time.time()
+        if progress_callback: progress_callback(95, f"{tag_prefix}_overlay")
+        apply_scrolling_text_overlay(
+            temp_output_path,
+            output_path,
+            scrolling_text,
+            total_duration,
+            resolution,
+            enc_name,
+            enc_opts,
+            bitrate
+        )
+        perf_summary['Overlay'] = time.time() - start_overlay_time
+    else:
+        # Jika tidak ada overlay, pindahkan saja file sementara ke output akhir
+        shutil.move(temp_output_path, output_path)
+
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    log_frame("✅ Done", f"Video created at {output_path}", GREEN)
     
     if progress_callback: progress_callback(100, f"{tag_prefix}_done")
     save_disclaimer(mp3_path, artist_name, output_path)
@@ -439,7 +459,7 @@ def build_video_multithread(settings, progress_callback=None):
                 perf_summary = future.result()
                 all_summaries.append((tag, task_settings["song_name"], perf_summary))
             except Exception as e:
-                logger.error(f"Error building '{tag}' video: {e}", exc_info=True)
+                logger.error(f"Error building '{tag}' video: {e}", exc_info=False)
                 if progress_callback: progress_callback(0, f"{tag}_error")
 
     overall_end_time = time.time()

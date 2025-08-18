@@ -1,44 +1,64 @@
 # overlaytext.py
+import os
+from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
 from .logger import get_logger
 
 logger = get_logger("sikabayan")
 
-def create_scrolling_text_filter(scrolling_text, resolution, font_path, scroll_speed=100):
+def apply_scrolling_text_overlay(input_video_path, output_video_path, song_text, total_duration, resolution, encoder_name, encoder_opts, bitrate):
     """
-    Membuat string filter 'drawtext' untuk FFmpeg untuk membuat teks berjalan.
+    Menambahkan teks overlay berjalan ke file video yang sudah ada menggunakan MoviePy.
 
     Args:
-        scrolling_text (str): Teks yang akan ditampilkan.
+        input_video_path (str): Path ke video input.
+        output_video_path (str): Path untuk menyimpan video output.
+        song_text (str): Teks yang akan berjalan.
+        total_duration (float): Durasi total video.
         resolution (tuple): Resolusi video (lebar, tinggi).
-        font_path (str): Path ke file font TrueType.
-        scroll_speed (int): Kecepatan teks berjalan dalam piksel per detik.
-
-    Returns:
-        str: String filter FFmpeg 'drawtext' atau string kosong jika tidak ada teks/font.
+        encoder_name (str): Nama encoder FFmpeg yang akan digunakan.
+        encoder_opts (dict): Opsi untuk encoder.
+        bitrate (str): Bitrate video.
     """
-    if not scrolling_text or not font_path:
-        return ""
-
+    base_video = None
+    main_video = None
     try:
-        # Menyesuaikan path font untuk filter FFmpeg di Windows
-        escaped_font_path = font_path.replace('\\', '/').replace(':', '\\\\:')
-        font_size = int(resolution[1] / 25)
+        logger.info("Memulai proses overlay teks dengan MoviePy...")
         
-        # Ekspresi untuk posisi x yang membuat teks berjalan dari kanan ke kiri
-        x_pos = f"w-mod(t*{scroll_speed},w+tw)"
+        # Muat video yang sudah dirender sebagai dasar
+        base_video = VideoFileClip(input_video_path)
+
+        # Buat klip teks berjalan sesuai dengan logika yang Anda berikan
+        text_clip = TextClip(song_text, fontsize=40, color="white", font="Arial-Bold")
+        text_width, text_height = text_clip.w, text_clip.h
         
-        # Membuat string filter
-        filter_string = (
-            f"drawtext="
-            f"text='{scrolling_text}':"
-            f"fontfile='{escaped_font_path}':"
-            f"fontsize={font_size}:"
-            f"fontcolor=white@0.8:"
-            f"x={x_pos}:"
-            f"y=h-th-20" # Posisi di bagian bawah
+        scrolling_text = text_clip.set_position(
+            lambda t: (resolution[0] - (t * 100) % (text_width + resolution[0]),
+                       resolution[1] - text_height - 20)
+        ).set_duration(total_duration)
+
+        # Gabungkan video dasar dengan teks berjalan
+        main_video = CompositeVideoClip([base_video, scrolling_text], size=resolution)
+        
+        # Tulis video final dengan audio dari video dasar
+        main_video.write_videofile(
+            output_video_path,
+            codec=encoder_name,
+            bitrate=bitrate,
+            audio=base_video.audio, # Gunakan audio dari video asli
+            threads=os.cpu_count(),
+            preset=encoder_opts.get("preset", "ultrafast"),
+            logger='bar'
         )
-        return filter_string
-        
+        logger.info("Proses overlay teks MoviePy selesai.")
+
     except Exception as e:
-        logger.warning(f"Gagal membuat filter teks overlay: {e}")
-        return ""
+        logger.error(f"Gagal menambahkan teks overlay dengan MoviePy: {e}", exc_info=True)
+        # Jika gagal, salin saja video asli tanpa overlay
+        if not os.path.exists(output_video_path):
+            shutil.copy(input_video_path, output_video_path)
+    finally:
+        # Pastikan semua klip ditutup untuk melepaskan file
+        if base_video:
+            base_video.close()
+        if main_video:
+            main_video.close()
