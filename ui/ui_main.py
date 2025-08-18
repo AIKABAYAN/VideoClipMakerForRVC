@@ -20,19 +20,17 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title("SiKabayan Video Clip Maker")
+        # Configure grid to allow expansion
+        self.root.grid_columnconfigure(1, weight=1)
 
         self._create_main_widgets()
 
         # Panels
-        self.animation_panel = AnimationPanel(self.root)
+        self.animation_panel = AnimationPanel(self.root, self.start_process)
         self.progress_panel = ProgressPanel(self.root)
 
-        # Start Button
-        self.start_button = tk.Button(root, text="Start", command=self.start_process)
-        self.start_button.grid(row=15, column=1, pady=10)
-
         # Progress di bawah tombol Start
-        self.progress_panel.frame.grid(row=16, column=0, columnspan=3, pady=10, sticky="ew")
+        self.progress_panel.frame.grid(row=16, column=0, columnspan=4, pady=10, sticky="ew")
 
         self.is_running = False
         self.start_time = None
@@ -43,107 +41,102 @@ class App:
         }
 
     def _create_main_widgets(self):
-        # Render Mode (paling atas)
-        tk.Label(self.root, text="Render Mode:").grid(row=0, column=0, sticky="w")
+        # --- Row 0: Render Mode ---
+        tk.Label(self.root, text="Render Mode:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        mode_frame = tk.Frame(self.root)
+        mode_frame.grid(row=0, column=1, columnspan=2, sticky="w")
         self.render_mode = tk.StringVar(value="single")
-        tk.Radiobutton(self.root, text="Single File", variable=self.render_mode, value="single",
-                       command=self.toggle_mode_fields).grid(row=0, column=1, sticky="w")
-        tk.Radiobutton(self.root, text="Batch Folder", variable=self.render_mode, value="batch",
-                       command=self.toggle_mode_fields).grid(row=0, column=2, sticky="w")
+        tk.Radiobutton(mode_frame, text="Single File", variable=self.render_mode, value="single",
+                       command=self.toggle_mode_fields).pack(side="left")
+        tk.Radiobutton(mode_frame, text="Batch Folder", variable=self.render_mode, value="batch",
+                       command=self.toggle_mode_fields).pack(side="left", padx=10)
 
-        # MP3 File
-        tk.Label(self.root, text="MP3 File:").grid(row=1, column=0, sticky="w")
-        self.mp3_path = tk.Entry(self.root, width=50)
-        self.mp3_path.grid(row=1, column=1)
+        # --- Row 1-7: File Paths and Metadata ---
+        self._create_path_entry("MP3 File:", 1, self.browse_mp3)
+        self._create_path_entry("MP3 Folder:", 2, self.browse_mp3_folder)
+        self._create_path_entry("Background Folder:", 4, self.browse_bg)
+        self._create_path_entry("Output Folder:", 5, self.browse_output)
+        self._create_path_entry("Cover Image:", 7, self.browse_cover)
+
         self.mp3_path.insert(0, DEFAULT_MP3)
-        tk.Button(self.root, text="Browse", command=self.browse_mp3).grid(row=1, column=2)
-
-        # MP3 Folder (Batch)
-        tk.Label(self.root, text="MP3 Folder:").grid(row=2, column=0, sticky="w")
-        self.mp3_folder = tk.Entry(self.root, width=50)
-        self.mp3_folder.grid(row=2, column=1)
         self.mp3_folder.insert(0, DEFAULT_BATCH_FOLDER)
-        self.mp3_folder_btn = tk.Button(self.root, text="Browse", command=self.browse_mp3_folder)
-        self.mp3_folder_btn.grid(row=2, column=2)
+        self.bg_folder.insert(0, DEFAULT_BG_FOLDER)
+        self.output_folder.insert(0, DEFAULT_OUTPUT)
+        self.cover_path.insert(0, DEFAULT_COVER)
 
-        # Add Background
+        tk.Label(self.root, text="Artist Name:").grid(row=6, column=0, sticky="w", padx=5, pady=2)
+        self.artist_name = tk.Entry(self.root)
+        self.artist_name.grid(row=6, column=1, columnspan=2, sticky="ew", padx=5)
+        self.artist_name.insert(0, DEFAULT_ARTIST)
+        
+        # --- Row 3: Add Background Checkbox ---
         self.add_background = tk.BooleanVar(value=True)
         tk.Checkbutton(self.root, text="Add Background", variable=self.add_background,
-                       command=self.toggle_background).grid(row=3, column=0, sticky="w")
+                       command=self.toggle_background).grid(row=3, column=0, sticky="w", padx=5)
 
-        # Background Folder
-        tk.Label(self.root, text="Background Folder:").grid(row=4, column=0, sticky="w")
-        self.bg_folder = tk.Entry(self.root, width=50)
-        self.bg_folder.grid(row=4, column=1)
-        self.bg_folder.insert(0, DEFAULT_BG_FOLDER)
-        self.bg_browse_btn = tk.Button(self.root, text="Browse", command=self.browse_bg)
-        self.bg_browse_btn.grid(row=4, column=2)
-
-        # Output Folder
-        tk.Label(self.root, text="Output Folder:").grid(row=5, column=0, sticky="w")
-        self.output_folder = tk.Entry(self.root, width=50)
-        self.output_folder.grid(row=5, column=1)
-        self.output_folder.insert(0, DEFAULT_OUTPUT)
-        tk.Button(self.root, text="Browse", command=self.browse_output).grid(row=5, column=2)
-
-        # Artist Name
-        tk.Label(self.root, text="Artist Name:").grid(row=6, column=0, sticky="w")
-        self.artist_name = tk.Entry(self.root, width=50)
-        self.artist_name.grid(row=6, column=1)
-        self.artist_name.insert(0, DEFAULT_ARTIST)
-
-        # Cover Image
-        tk.Label(self.root, text="Cover Image:").grid(row=7, column=0, sticky="w")
-        self.cover_path = tk.Entry(self.root, width=50)
-        self.cover_path.grid(row=7, column=1)
-        self.cover_path.insert(0, DEFAULT_COVER)
-        tk.Button(self.root, text="Browse", command=self.browse_cover).grid(row=7, column=2)
-
-        # Video Settings
-        tk.Label(self.root, text="Background Mode:").grid(row=8, column=0, sticky="w")
+        # --- Row 8-9: Video Settings ---
+        tk.Label(self.root, text="Background Mode:").grid(row=8, column=0, sticky="w", padx=5, pady=2)
         self.bg_mode = ttk.Combobox(self.root, values=["Black", "Blur", "Darken"], width=10, state="readonly")
-        self.bg_mode.grid(row=8, column=1, sticky="w")
+        self.bg_mode.grid(row=8, column=1, sticky="w", padx=5)
         self.bg_mode.set(DEFAULT_BG_MODE)
 
-        tk.Label(self.root, text="Blur/Darken Strength:").grid(row=9, column=0, sticky="w")
+        tk.Label(self.root, text="Blur/Darken Strength:").grid(row=9, column=0, sticky="w", padx=5, pady=2)
         self.blur_level = tk.Scale(self.root, from_=1, to=10, orient=tk.HORIZONTAL)
-        self.blur_level.grid(row=9, column=1, sticky="w")
+        self.blur_level.grid(row=9, column=1, columnspan=2, sticky="ew", padx=5)
         self.blur_level.set(DEFAULT_BLUR_LEVEL)
 
-        # Export Options
-        tk.Label(self.root, text="Export Format:").grid(row=10, column=0, sticky="w")
-        self.export_youtube = tk.BooleanVar(value=True)
-        self.export_shorts = tk.BooleanVar(value=False)
-        tk.Checkbutton(self.root, text="YouTube", variable=self.export_youtube).grid(row=10, column=1, sticky="w")
+        # --- Row 10-12: Export Options ---
+        tk.Label(self.root, text="Export Format:", font=("", 10, "bold")).grid(row=10, column=0, sticky="w", padx=5, pady=(10,2))
 
-        self.youtube_res_select = ttk.Combobox(self.root, values=list(YOUTUBE_RESOLUTIONS.keys()), width=15,
-                                               state="readonly")
-        self.youtube_res_select.grid(row=10, column=2, sticky="w")
+        # YouTube Export
+        self.export_youtube = tk.BooleanVar(value=True)
+        tk.Checkbutton(self.root, text="YouTube (16:9)", variable=self.export_youtube).grid(row=11, column=0, sticky="w", padx=5)
+        self.youtube_res_select = ttk.Combobox(self.root, values=list(YOUTUBE_RESOLUTIONS.keys()), width=15, state="readonly")
+        self.youtube_res_select.grid(row=11, column=1, sticky="w", padx=5)
         self.youtube_res_select.set("HD (1280x720)")
 
-        tk.Checkbutton(self.root, text="Shorts/TikTok (9:16)", variable=self.export_shorts).grid(row=11, column=1,
-                                                                                                 sticky="w")
+        # Shorts Export
+        self.export_shorts = tk.BooleanVar(value=False)
+        tk.Checkbutton(self.root, text="Shorts/TikTok (9:16)", variable=self.export_shorts).grid(row=12, column=0, sticky="w", padx=5)
+        
+        # Visualizer Options (Cleaned up layout)
+        visualizer_frame = tk.Frame(self.root)
+        visualizer_frame.grid(row=12, column=1, columnspan=2, sticky="w", padx=5)
 
-        # Include visualizer
         self.include_visualizer = tk.BooleanVar(value=True)
-        tk.Checkbutton(self.root, text="Include Audio Visualizer", variable=self.include_visualizer).grid(row=11,
-                                                                                                         column=2,
-                                                                                                         sticky="w")
+        tk.Checkbutton(visualizer_frame, text="Include Audio Visualizer", variable=self.include_visualizer).pack(side="left")
 
-        # Visualizer Height
-        tk.Label(self.root, text="Visualizer Height:").grid(row=11, column=3, sticky="w")
+        tk.Label(visualizer_frame, text="Height:").pack(side="left", padx=(10, 2))
         self.visualizer_height_var = tk.StringVar(value=DEFAULT_VISUALIZER_HEIGHT)
         self.visualizer_height_select = ttk.Combobox(
-            self.root,
+            visualizer_frame,
             values=["90%", "80%", "60%", "40%", "20%"],
             textvariable=self.visualizer_height_var,
             width=5,
             state="readonly"
         )
-        self.visualizer_height_select.grid(row=11, column=4, sticky="w")
+        self.visualizer_height_select.pack(side="left")
 
         self.toggle_mode_fields()
 
+    def _create_path_entry(self, label_text, row, command):
+        """Helper to create a Label, Entry, and Button row for file/folder paths."""
+        tk.Label(self.root, text=label_text).grid(row=row, column=0, sticky="w", padx=5, pady=2)
+        
+        entry = tk.Entry(self.root)
+        entry.grid(row=row, column=1, sticky="ew", padx=5)
+        
+        button = tk.Button(self.root, text="Browse", command=command)
+        button.grid(row=row, column=2, sticky="e", padx=5)
+
+        # Store references to the created widgets
+        if "MP3 File" in label_text: self.mp3_path = entry
+        elif "MP3 Folder" in label_text: self.mp3_folder, self.mp3_folder_btn = entry, button
+        elif "Background Folder" in label_text: self.bg_folder, self.bg_browse_btn = entry, button
+        elif "Output Folder" in label_text: self.output_folder = entry
+        elif "Cover Image" in label_text: self.cover_path = entry
+        
+        return entry, button
 
     def toggle_background(self):
         state = "normal" if self.add_background.get() else "disabled"
@@ -151,14 +144,10 @@ class App:
         self.bg_browse_btn.config(state=state)
 
     def toggle_mode_fields(self):
-        if self.render_mode.get() == "single":
-            self.mp3_path.config(state="normal")
-            self.mp3_folder.config(state="disabled")
-            self.mp3_folder_btn.config(state="disabled")
-        else:
-            self.mp3_path.config(state="disabled")
-            self.mp3_folder.config(state="normal")
-            self.mp3_folder_btn.config(state="normal")
+        is_single = self.render_mode.get() == "single"
+        self.mp3_path.config(state="normal" if is_single else "disabled")
+        self.mp3_folder.config(state="disabled" if is_single else "normal")
+        self.mp3_folder_btn.config(state="disabled" if is_single else "normal")
 
     def browse_mp3(self):
         path = filedialog.askopenfilename(filetypes=[("MP3 Files", "*.mp3")])
@@ -191,37 +180,37 @@ class App:
             self.cover_path.insert(0, path)
 
     def start_process(self):
-        self.start_button.config(state="disabled")
+        self.animation_panel.start_button.config(state="disabled")
         
         self.progress_vars["youtube"].set(0)
         self.progress_vars["shorts"].set(0)
         self.progress_panel.update_progress(0, "youtube_idle")
         self.progress_panel.update_progress(0, "shorts_idle")
         self.progress_panel.update_time("Waktu: 0 detik")
+        self.progress_panel.update_file_header("Preparing to process...")
 
         if self.render_mode.get() == "single":
             if not os.path.isfile(self.mp3_path.get()):
                 messagebox.showerror("Error", "MP3 file tidak ditemukan.")
-                self.start_button.config(state="normal")
+                self.animation_panel.start_button.config(state="normal")
                 return
         else:
             if not os.path.isdir(self.mp3_folder.get()):
                 messagebox.showerror("Error", "Folder MP3 tidak ditemukan.")
-                self.start_button.config(state="normal")
+                self.animation_panel.start_button.config(state="normal")
                 return
 
-        if self.add_background.get():
-            if not os.path.isdir(self.bg_folder.get()):
-                messagebox.showerror("Error", "Folder background tidak ditemukan.")
-                self.start_button.config(state="normal")
-                return
+        if self.add_background.get() and not os.path.isdir(self.bg_folder.get()):
+            messagebox.showerror("Error", "Folder background tidak ditemukan.")
+            self.animation_panel.start_button.config(state="normal")
+            return
 
         if not os.path.isdir(self.output_folder.get()):
             try:
                 os.makedirs(self.output_folder.get(), exist_ok=True)
             except Exception as e:
                 messagebox.showerror("Error", f"Gagal membuat output folder:\n{e}")
-                self.start_button.config(state="normal")
+                self.animation_panel.start_button.config(state="normal")
                 return
 
         self.start_time = time.time()
@@ -232,7 +221,7 @@ class App:
     def update_elapsed_time(self):
         if self.is_running:
             elapsed = int(time.time() - self.start_time)
-            avg_progress = sum(var.get() for var in self.progress_vars.values()) / len(self.progress_vars)
+            avg_progress = (self.progress_vars["youtube"].get() + self.progress_vars["shorts"].get()) / 2
             
             eta_text = ""
             if avg_progress > 1:
@@ -246,23 +235,28 @@ class App:
             self.root.after(1000, self.update_elapsed_time)
 
     def run_builder(self):
+        total_mp3s = 0
         try:
             tasks = []
             if self.render_mode.get() == "single":
                 tasks.append(self.mp3_path.get())
             else:
-                for file in os.listdir(self.mp3_folder.get()):
-                    if file.lower().endswith(".mp3"):
-                        tasks.append(os.path.join(self.mp3_folder.get(), file))
+                tasks = [os.path.join(self.mp3_folder.get(), f) for f in os.listdir(self.mp3_folder.get()) if f.lower().endswith(".mp3")]
 
             total_mp3s = len(tasks)
+            if total_mp3s == 0:
+                self.progress_panel.update_file_header("No MP3 files found to process.")
+                return
+
             for i, mp3_file in enumerate(tasks):
-                logger.info(f"--- Memproses file {i+1} dari {total_mp3s}: {os.path.basename(mp3_file)} ---")
+                file_name = os.path.basename(mp3_file)
+                header_text = f"[{i + 1} of {total_mp3s}] - {file_name}"
+                self.progress_panel.update_file_header(header_text)
                 
-                output_safe_name = sanitize_filename(os.path.splitext(os.path.basename(mp3_file))[0])
+                logger.info(f"--- Memproses file {i+1} dari {total_mp3s}: {file_name} ---")
+                
+                output_safe_name = sanitize_filename(os.path.splitext(file_name)[0])
                 artist = self.artist_name.get()
-                
-                # --- CHANGE: Scrolling text format updated ---
                 dynamic_scrolling_text = f"[{output_safe_name}] - [{artist}]"
                 
                 settings = {
@@ -280,7 +274,8 @@ class App:
                     "include_visualizer": self.include_visualizer.get(),
                     "visualizer_height": self.visualizer_height_var.get(),
                     "intro_duration": 2,
-                    "scrolling_text": dynamic_scrolling_text
+                    "scrolling_text": dynamic_scrolling_text,
+                    "animations": self.animation_panel.get_selected()
                 }
 
                 try:
@@ -291,7 +286,9 @@ class App:
 
         finally:
             self.is_running = False
-            self.start_button.config(state="normal")
+            self.animation_panel.start_button.config(state="normal")
+            if total_mp3s > 0:
+                self.progress_panel.update_file_header(f"Finished processing {total_mp3s} file(s).")
             logger.info("--- Semua proses selesai! ---")
 
     @staticmethod
@@ -301,11 +298,7 @@ class App:
         return f"{m} menit {s} detik" if m else f"{s} detik"
 
     def update_progress(self, percent, stage):
-        """Callback untuk memperbarui progress bar dari thread lain."""
-        task_key = "youtube"
-        if "shorts" in stage:
-            task_key = "shorts"
-            
+        task_key = "youtube" if "youtube" in stage else "shorts"
         self.progress_vars[task_key].set(percent)
         self.progress_panel.update_progress(percent, stage)
         self.root.update_idletasks()
