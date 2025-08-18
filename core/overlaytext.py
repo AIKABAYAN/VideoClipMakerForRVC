@@ -1,7 +1,8 @@
 # overlaytext.py
 import os
+import shutil
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
-from .logger import get_logger
+from core.logger import get_logger
 
 logger = get_logger("sikabayan")
 
@@ -27,12 +28,16 @@ def apply_scrolling_text_overlay(input_video_path, output_video_path, song_text,
         # Muat video yang sudah dirender sebagai dasar
         base_video = VideoFileClip(input_video_path)
 
-        # Buat klip teks berjalan sesuai dengan logika yang Anda berikan
+        # Tetapkan kecepatan gulir tetap (misalnya, 150 piksel per detik)
+        scroll_speed = 150 
+
+        # Buat klip teks
         text_clip = TextClip(song_text, fontsize=40, color="white", font="Arial-Bold")
         text_width, text_height = text_clip.w, text_clip.h
         
+        # Logika posisi baru berdasarkan kecepatan tetap
         scrolling_text = text_clip.set_position(
-            lambda t: (resolution[0] - (t * 100) % (text_width + resolution[0]),
+            lambda t: (resolution[0] - (t * scroll_speed) % (text_width + resolution[0]),
                        resolution[1] - text_height - 20)
         ).set_duration(total_duration)
 

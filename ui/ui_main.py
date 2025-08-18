@@ -29,10 +29,10 @@ class App:
 
         # Start Button
         self.start_button = tk.Button(root, text="Start", command=self.start_process)
-        self.start_button.grid(row=16, column=1, pady=10)
+        self.start_button.grid(row=15, column=1, pady=10)
 
         # Progress di bawah tombol Start
-        self.progress_panel.frame.grid(row=17, column=0, columnspan=3, pady=10, sticky="ew")
+        self.progress_panel.frame.grid(row=16, column=0, columnspan=3, pady=10, sticky="ew")
 
         self.is_running = False
         self.start_time = None
@@ -99,45 +99,39 @@ class App:
         self.cover_path.insert(0, DEFAULT_COVER)
         tk.Button(self.root, text="Browse", command=self.browse_cover).grid(row=7, column=2)
 
-        # Scrolling Text Overlay
-        tk.Label(self.root, text="Scrolling Text:").grid(row=8, column=0, sticky="w")
-        self.scrolling_text = tk.Entry(self.root, width=50)
-        self.scrolling_text.grid(row=8, column=1)
-        self.scrolling_text.insert(0, "RVC by Sharkoded")
-
         # Video Settings
-        tk.Label(self.root, text="Background Mode:").grid(row=9, column=0, sticky="w")
+        tk.Label(self.root, text="Background Mode:").grid(row=8, column=0, sticky="w")
         self.bg_mode = ttk.Combobox(self.root, values=["Black", "Blur", "Darken"], width=10, state="readonly")
-        self.bg_mode.grid(row=9, column=1, sticky="w")
+        self.bg_mode.grid(row=8, column=1, sticky="w")
         self.bg_mode.set(DEFAULT_BG_MODE)
 
-        tk.Label(self.root, text="Blur/Darken Strength:").grid(row=10, column=0, sticky="w")
+        tk.Label(self.root, text="Blur/Darken Strength:").grid(row=9, column=0, sticky="w")
         self.blur_level = tk.Scale(self.root, from_=1, to=10, orient=tk.HORIZONTAL)
-        self.blur_level.grid(row=10, column=1, sticky="w")
+        self.blur_level.grid(row=9, column=1, sticky="w")
         self.blur_level.set(DEFAULT_BLUR_LEVEL)
 
         # Export Options
-        tk.Label(self.root, text="Export Format:").grid(row=11, column=0, sticky="w")
+        tk.Label(self.root, text="Export Format:").grid(row=10, column=0, sticky="w")
         self.export_youtube = tk.BooleanVar(value=True)
         self.export_shorts = tk.BooleanVar(value=False)
-        tk.Checkbutton(self.root, text="YouTube", variable=self.export_youtube).grid(row=11, column=1, sticky="w")
+        tk.Checkbutton(self.root, text="YouTube", variable=self.export_youtube).grid(row=10, column=1, sticky="w")
 
         self.youtube_res_select = ttk.Combobox(self.root, values=list(YOUTUBE_RESOLUTIONS.keys()), width=15,
                                                state="readonly")
-        self.youtube_res_select.grid(row=11, column=2, sticky="w")
+        self.youtube_res_select.grid(row=10, column=2, sticky="w")
         self.youtube_res_select.set("HD (1280x720)")
 
-        tk.Checkbutton(self.root, text="Shorts/TikTok (9:16)", variable=self.export_shorts).grid(row=12, column=1,
+        tk.Checkbutton(self.root, text="Shorts/TikTok (9:16)", variable=self.export_shorts).grid(row=11, column=1,
                                                                                                  sticky="w")
 
         # Include visualizer
         self.include_visualizer = tk.BooleanVar(value=True)
-        tk.Checkbutton(self.root, text="Include Audio Visualizer", variable=self.include_visualizer).grid(row=12,
+        tk.Checkbutton(self.root, text="Include Audio Visualizer", variable=self.include_visualizer).grid(row=11,
                                                                                                          column=2,
                                                                                                          sticky="w")
 
         # Visualizer Height
-        tk.Label(self.root, text="Visualizer Height:").grid(row=12, column=3, sticky="w")
+        tk.Label(self.root, text="Visualizer Height:").grid(row=11, column=3, sticky="w")
         self.visualizer_height_var = tk.StringVar(value=DEFAULT_VISUALIZER_HEIGHT)
         self.visualizer_height_select = ttk.Combobox(
             self.root,
@@ -146,7 +140,7 @@ class App:
             width=5,
             state="readonly"
         )
-        self.visualizer_height_select.grid(row=12, column=4, sticky="w")
+        self.visualizer_height_select.grid(row=11, column=4, sticky="w")
 
         self.toggle_mode_fields()
 
@@ -266,13 +260,17 @@ class App:
                 logger.info(f"--- Memproses file {i+1} dari {total_mp3s}: {os.path.basename(mp3_file)} ---")
                 
                 output_safe_name = sanitize_filename(os.path.splitext(os.path.basename(mp3_file))[0])
+                artist = self.artist_name.get()
+                
+                # --- CHANGE: Scrolling text format updated ---
+                dynamic_scrolling_text = f"[{output_safe_name}] - [{artist}]"
                 
                 settings = {
                     "mp3_file": mp3_file,
                     "bg_folder": self.bg_folder.get() if self.add_background.get() else None,
                     "output_folder": self.output_folder.get(),
                     "song_name": output_safe_name,
-                    "artist_name": self.artist_name.get(),
+                    "artist_name": artist,
                     "cover_image": self.cover_path.get(),
                     "bg_mode": self.bg_mode.get(),
                     "blur_level": self.blur_level.get(),
@@ -282,7 +280,7 @@ class App:
                     "include_visualizer": self.include_visualizer.get(),
                     "visualizer_height": self.visualizer_height_var.get(),
                     "intro_duration": 2,
-                    "scrolling_text": self.scrolling_text.get()
+                    "scrolling_text": dynamic_scrolling_text
                 }
 
                 try:
