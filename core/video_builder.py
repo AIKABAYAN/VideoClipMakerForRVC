@@ -25,10 +25,11 @@ from core.utils import list_images
 from core.logger import get_logger
 from tqdm import tqdm
 
-# These modules are project-specific; keep them as-is
-from core.visualizer import generate_visualizer_clip
+# ✅ UPDATED: use disk-based visualizer
+from core.visualizer import write_visualizer_sequence
+
 from .disclaimer_builder import save_disclaimer
-from .overlaytext import apply_scrolling_text_overlay # <-- Diimpor dari file baru
+from .overlaytext import apply_scrolling_text_overlay
 
 logger = get_logger("sikabayan")
 
@@ -74,7 +75,8 @@ def detect_best_encoder() -> Tuple[str, Dict[str, str]]:
             if subprocess.run(["nvidia-smi"], capture_output=True).returncode == 0:
                 logger.info("NVIDIA NVENC encoder detected.")
                 return "h264_nvenc", {"preset": "p1", "rc": "vbr"}
-        except Exception: pass
+        except Exception:
+            pass
     if "h264_qsv" in enc_list:
         logger.info("Intel QuickSync (QSV) encoder detected.")
         return "h264_qsv", {"preset": "veryfast"}
@@ -89,7 +91,10 @@ def detect_best_encoder() -> Tuple[str, Dict[str, str]]:
 def configure_imagemagick():
     """Configures the path to the ImageMagick binary for Windows."""
     if platform.system() == "Windows":
-        for path in [r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe", r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"]:
+        for path in [
+            r"C:\Program Files\ImageMagick-7.1.2-Q16-HDRI\magick.exe",
+            r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"
+        ]:
             if os.path.exists(path):
                 try:
                     change_settings({"IMAGEMAGICK_BINARY": path})
@@ -107,8 +112,10 @@ def configure_imagemagick():
 def select_bitrate_for_resolution(resolution):
     """Selects a video bitrate based on resolution."""
     pixels = resolution[0] * resolution[1]
-    if pixels > 1920 * 1080: return "12000k"
-    if pixels > 1280 * 720: return "8000k"
+    if pixels > 1920 * 1080:
+        return "12000k"
+    if pixels > 1280 * 720:
+        return "8000k"
     return "5000k"
 
 def get_font_path():
@@ -116,17 +123,19 @@ def get_font_path():
     if platform.system() == "Windows":
         return "C:/Windows/Fonts/arial.ttf"
     elif platform.system() == "Linux":
-        for path in ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"]:
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+        ]:
             if os.path.exists(path):
                 return path
-    elif platform.system() == "Darwin": # macOS
+    elif platform.system() == "Darwin":  # macOS
         return "/System/Library/Fonts/Supplemental/Arial.ttf"
-    return None # Fallback
+    return None  # Fallback
 
 # ----------------------------------------
 # HYBRID TURBO PIPELINE (MAX SPEED)
 # ----------------------------------------
-
 def create_intro_frame(song_name, artist_name, background_image, resolution):
     """Creates a single frame for the video intro with adaptive text."""
     W, H = resolution
@@ -142,11 +151,13 @@ def create_intro_frame(song_name, artist_name, background_image, resolution):
     title_font = ImageFont.load_default()
     try:
         title_font = ImageFont.truetype(font_path, title_font_size)
-        longest_line = max(formatted_song_name.split('\n'), key=lambda line: title_font.getbbox(line)[2])
+        longest_line = max(formatted_song_name.split('\n'),
+                           key=lambda line: title_font.getbbox(line)[2])
         while title_font.getbbox(longest_line)[2] > max_text_width:
             title_font_size -= 2
             title_font = ImageFont.truetype(font_path, title_font_size)
-            longest_line = max(formatted_song_name.split('\n'), key=lambda line: title_font.getbbox(line)[2])
+            longest_line = max(formatted_song_name.split('\n'),
+                               key=lambda line: title_font.getbbox(line)[2])
     except (IOError, AttributeError):
         logger.warning(f"Font not found or failed to load at {font_path}. Using default.")
 
@@ -165,12 +176,14 @@ def create_intro_frame(song_name, artist_name, background_image, resolution):
     title_bbox = draw.textbbox((0, 0), formatted_song_name, font=title_font, align="center")
     title_w = title_bbox[2] - title_bbox[0]
     title_h = title_bbox[3] - title_bbox[1]
-    draw.text(((W - title_w) / 2, y_cursor), formatted_song_name, font=title_font, fill="white", align="center")
+    draw.text(((W - title_w) / 2, y_cursor),
+              formatted_song_name, font=title_font, fill="white", align="center")
     y_cursor += title_h + int(H * 0.02)
 
     artist_bbox = draw.textbbox((0, 0), artist_name, font=artist_font)
     artist_w = artist_bbox[2] - artist_bbox[0]
-    draw.text(((W - artist_w) / 2, y_cursor), artist_name, font=artist_font, fill=(200, 200, 200))
+    draw.text(((W - artist_w) / 2, y_cursor),
+              artist_name, font=artist_font, fill=(200, 200, 200))
 
     return np.array(bg)
 
@@ -186,7 +199,9 @@ def generate_frames_task(args):
         static_count = frames_per_image if is_last_image_in_video else (frames_per_image - trans_frames)
         
         for _ in range(static_count):
-            Image.fromarray(current_frame_np).save(os.path.join(frames_dir, f"frame_{frame_index:08d}.jpg"), format='JPEG', quality=95)
+            Image.fromarray(current_frame_np).save(
+                os.path.join(frames_dir, f"frame_{frame_index:08d}.jpg"),
+                format='JPEG', quality=95)
             frame_index += 1
 
         if i + 1 < len(base_frames_chunk):
@@ -195,7 +210,9 @@ def generate_frames_task(args):
             for k in range(trans_frames):
                 alpha = (k + 1) / float(trans_frames)
                 blended = ((1.0 - alpha) * current_float_np + alpha * next_frame_np)
-                Image.fromarray(blended.clip(0, 255).astype(np.uint8)).save(os.path.join(frames_dir, f"frame_{frame_index:08d}.jpg"), format='JPEG', quality=95)
+                Image.fromarray(blended.clip(0, 255).astype(np.uint8)).save(
+                    os.path.join(frames_dir, f"frame_{frame_index:08d}.jpg"),
+                    format='JPEG', quality=95)
                 frame_index += 1
                 
     return frame_index - start_frame_index
@@ -217,7 +234,8 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
     audio_clip.close()
     
     fps = 30
-    if not images: images = ["__BLACK__"]
+    if not images:
+        images = ["__BLACK__"]
     
     main_content_duration = total_duration - intro_duration
     if main_content_duration <= 0:
@@ -231,35 +249,48 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
     total_frames_estimate = int(total_duration * fps)
     intro_frames_count = int(intro_duration * fps)
 
-    if progress_callback: progress_callback(1, f"{tag_prefix}_preprocess")
+    if progress_callback:
+        progress_callback(1, f"{tag_prefix}_preprocess")
     start_time = time.time()
+
     def _compose_base_frame(img_path: str) -> np.ndarray:
         W, H = resolution
-        if img_path == "__BLACK__": return np.zeros((H, W, 3), dtype=np.uint8)
-        try: im = Image.open(img_path).convert("RGB")
-        except Exception: return np.zeros((H, W, 3), dtype=np.uint8)
+        if img_path == "__BLACK__":
+            return np.zeros((H, W, 3), dtype=np.uint8)
+        try:
+            im = Image.open(img_path).convert("RGB")
+        except Exception:
+            return np.zeros((H, W, 3), dtype=np.uint8)
         bg = im.resize((W, H), Image.LANCZOS)
-        if bg_mode == "Blur": bg = bg.filter(ImageFilter.GaussianBlur(radius=blur_level))
-        elif bg_mode == "Darken": bg = Image.fromarray((np.array(bg) * (1.0 - blur_level / 10.0)).astype(np.uint8))
+        if bg_mode == "Blur":
+            bg = bg.filter(ImageFilter.GaussianBlur(radius=blur_level))
+        elif bg_mode == "Darken":
+            bg = Image.fromarray((np.array(bg) * (1.0 - blur_level / 10.0)).astype(np.uint8))
         im.thumbnail((W, H), Image.LANCZOS)
-        canvas = bg.copy(); canvas.paste(im, ((W - im.width) // 2, (H - im.height) // 2))
+        canvas = bg.copy()
+        canvas.paste(im, ((W - im.width) // 2, (H - im.height) // 2))
         return np.array(canvas)
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         base_frames = list(pool.map(_compose_base_frame, images))
     perf_summary['Preprocess'] = time.time() - start_time
     log_frame("🟢 Preprocess", f"{len(images)} images composited in {perf_summary['Preprocess']:.1f}s", GREEN)
-    if progress_callback: progress_callback(5, f"{tag_prefix}_preprocess")
+    if progress_callback:
+        progress_callback(5, f"{tag_prefix}_preprocess")
 
+    # temp dir
     start_time = time.time()
     temp_dir = tempfile.mkdtemp(prefix=f"sikabayan_hybrid_{tag_prefix}_")
     frames_dir = os.path.join(temp_dir, "frames")
     os.makedirs(frames_dir, exist_ok=True)
     
+    # intro frames
     first_image_pil = Image.fromarray(base_frames[0])
     intro_frame_np = create_intro_frame(song_name, artist_name, first_image_pil, resolution)
     for i in range(intro_frames_count):
-        Image.fromarray(intro_frame_np).save(os.path.join(frames_dir, f"frame_{i:08d}.jpg"), format='JPEG', quality=95)
+        Image.fromarray(intro_frame_np).save(
+            os.path.join(frames_dir, f"frame_{i:08d}.jpg"),
+            format='JPEG', quality=95)
 
     num_workers = MAX_WORKERS
     chunk_size = math.ceil(len(base_frames) / num_workers)
@@ -268,11 +299,12 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
     
     for i in range(num_workers):
         chunk = base_frames[i * chunk_size:(i + 1) * chunk_size]
-        if not chunk: continue
+        if not chunk:
+            continue
         is_last_chunk = (i == num_workers - 1)
         tasks.append((chunk, frame_cursor, frames_per_image, trans_frames, frames_dir, is_last_chunk))
         num_images_in_chunk = len(chunk)
-        num_transitions_in_chunk = num_images_in_chunk if is_last_chunk else num_images_in_chunk -1
+        num_transitions_in_chunk = num_images_in_chunk if is_last_chunk else num_images_in_chunk - 1
         frame_cursor += num_images_in_chunk * frames_per_image - num_transitions_in_chunk * trans_frames
 
     total_frames_written = intro_frames_count
@@ -285,24 +317,12 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
                     percent = 5 + int(45 * (total_frames_written / total_frames_estimate))
                     progress_callback(percent, f"{tag_prefix}_frames")
     
-    for i in range(num_workers - 1):
-        chunk_end_index = (i + 1) * chunk_size -1
-        if chunk_end_index >= len(base_frames) -1: continue
-        last_frame_of_chunk = base_frames[chunk_end_index]
-        first_frame_of_next_chunk = base_frames[chunk_end_index + 1]
-        transition_start_frame = intro_frames_count + (chunk_end_index + 1) * (frames_per_image - trans_frames)
-        current_float = last_frame_of_chunk.astype(np.float32)
-        next_float = first_frame_of_next_chunk.astype(np.float32)
-        for k in range(trans_frames):
-            alpha = (k + 1) / float(trans_frames)
-            blended = ((1.0 - alpha) * current_float + alpha * next_float)
-            frame_idx_to_overwrite = transition_start_frame + k
-            Image.fromarray(blended.clip(0, 255).astype(np.uint8)).save(os.path.join(frames_dir, f"frame_{frame_idx_to_overwrite:08d}.jpg"), format='JPEG', quality=95)
-
     perf_summary['Frames'] = time.time() - start_time
     log_frame("🟢 Frames", f"{total_frames_written} JPEG frames written in {perf_summary['Frames']:.1f}s", GREEN)
-    if progress_callback: progress_callback(50, f"{tag_prefix}_frames")
+    if progress_callback:
+        progress_callback(50, f"{tag_prefix}_frames")
 
+    # visualizer
     vis_frames_pattern = None
     if include_visualizer:
         start_time_vis = time.time()
@@ -311,20 +331,27 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
             os.makedirs(vis_frames_dir, exist_ok=True)
             vis_frames_pattern = os.path.join(vis_frames_dir, "vis_frame_%08d.png")
             
-            vis_clip = generate_visualizer_clip(mp3_path, fps, resolution, 0.6, float(str(visualizer_height).strip('%')) / 100.0)
-            vis_clip.write_images_sequence(vis_frames_pattern, fps=fps, verbose=False, logger=None)
-            vis_clip.close()
+            write_visualizer_sequence(
+                mp3_path,
+                fps=fps,
+                resolution=resolution,
+                opacity=0.6,
+                scale_height=float(str(visualizer_height).strip('%')) / 100.0,
+                out_pattern=vis_frames_pattern,
+            )
             
             if progress_callback:
                 progress_callback(55, f"{tag_prefix}_visualizer")
                 
             perf_summary['Visualizer'] = time.time() - start_time_vis
-            log_frame("🟡 Visualizer", f"Rendered PNG sequence in {perf_summary['Visualizer']:.1f}s", YELLOW)
+            log_frame("🟡 Visualizer", f"Wrote PNG sequence in {perf_summary['Visualizer']:.1f}s", YELLOW)
         except Exception as e:
             log_frame("⚠️ Visualizer", f"Skipping due to error: {e}", YELLOW)
             vis_frames_pattern = None
-    if progress_callback: progress_callback(60, f"{tag_prefix}_visualizer")
+    if progress_callback:
+        progress_callback(60, f"{tag_prefix}_visualizer")
 
+    # encode
     start_time = time.time()
     enc_name, enc_opts = detect_best_encoder()
     bitrate = select_bitrate_for_resolution(resolution)
@@ -357,7 +384,8 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
     cmd.extend(["-map", "1:a"])
     
     cmd.extend(["-pix_fmt", "yuv420p", "-shortest", "-c:a", "aac", "-b:a", "192k", "-c:v", enc_name])
-    for key, value in enc_opts.items(): cmd.extend([f"-{key}", str(value)])
+    for key, value in enc_opts.items():
+        cmd.extend([f"-{key}", str(value)])
     cmd.extend(["-b:v", bitrate, temp_output_path])
     
     log_frame("🟡 Encode", f"Using {enc_name} @ {bitrate} (pass 1: Main + Visualizer)", YELLOW)
@@ -387,7 +415,8 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
     
     if scrolling_text:
         start_overlay_time = time.time()
-        if progress_callback: progress_callback(95, f"{tag_prefix}_overlay")
+        if progress_callback:
+            progress_callback(95, f"{tag_prefix}_overlay")
         
         apply_scrolling_text_overlay(
             temp_output_path,
@@ -403,10 +432,19 @@ def _build_single_output_hybrid(settings: Dict[str, Any], tag_prefix="", progres
     else:
         shutil.move(temp_output_path, output_path)
 
-    shutil.rmtree(temp_dir, ignore_errors=True)
+    # ✅ Cleanup temporary dirs
+    try:
+        if vis_frames_pattern:
+            shutil.rmtree(os.path.dirname(vis_frames_pattern), ignore_errors=True)
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        log_frame("🧹 Cleanup", f"Removed temp dirs for {tag_prefix}", YELLOW)
+    except Exception as e:
+        log_frame("⚠️ Cleanup", f"Failed to remove temp dirs: {e}", YELLOW)
+
     log_frame("✅ Done", f"Video created at {output_path}", GREEN)
     
-    if progress_callback: progress_callback(100, f"{tag_prefix}_done")
+    if progress_callback:
+        progress_callback(100, f"{tag_prefix}_done")
     save_disclaimer(mp3_path, artist_name, output_path)
     return perf_summary
 
@@ -422,11 +460,15 @@ def build_video_multithread(settings, progress_callback=None):
     export_shorts = settings.get("export_shorts", False)
     cover_image = settings.get("cover_image")
     
-    try: res_parts = settings.get("resolution", (1280, 720)); yt_resolution = (int(res_parts[0]), int(res_parts[1]))
-    except: yt_resolution = (1280, 720)
+    try:
+        res_parts = settings.get("resolution", (1280, 720))
+        yt_resolution = (int(res_parts[0]), int(res_parts[1]))
+    except:
+        yt_resolution = (1280, 720)
     shorts_resolution = tuple(settings.get("shorts_resolution", (1080, 1920)))
 
-    check_ffmpeg(); configure_imagemagick()
+    check_ffmpeg()
+    configure_imagemagick()
     
     images = list_images(settings.get("bg_folder")) if settings.get("bg_folder") and os.path.isdir(settings.get("bg_folder")) else []
     
@@ -441,11 +483,15 @@ def build_video_multithread(settings, progress_callback=None):
     tasks_to_run = []
     if export_youtube:
         yt_settings = settings.copy()
-        yt_settings.update({"images": images, "output_path": os.path.join(output_folder, f"{song_name}.mp4"), "resolution": yt_resolution})
+        yt_settings.update({"images": images,
+                            "output_path": os.path.join(output_folder, f"{song_name}.mp4"),
+                            "resolution": yt_resolution})
         tasks_to_run.append(("youtube", yt_settings))
     if export_shorts:
         shorts_settings = settings.copy()
-        shorts_settings.update({"images": images, "output_path": os.path.join(output_folder, f"{song_name}_Shorts.mp4"), "resolution": shorts_resolution})
+        shorts_settings.update({"images": images,
+                                "output_path": os.path.join(output_folder, f"{song_name}_Shorts.mp4"),
+                                "resolution": shorts_resolution})
         tasks_to_run.append(("shorts", shorts_settings))
 
     overall_start_time = time.time()
@@ -453,7 +499,10 @@ def build_video_multithread(settings, progress_callback=None):
 
     all_summaries = []
     with ThreadPoolExecutor(max_workers=min(len(tasks_to_run), MAX_WORKERS) or 1) as executor:
-        futures = {executor.submit(_build_single_output_hybrid, task_settings, tag, progress_callback): (tag, task_settings) for tag, task_settings in tasks_to_run}
+        futures = {
+            executor.submit(_build_single_output_hybrid, task_settings, tag, progress_callback): (tag, task_settings)
+            for tag, task_settings in tasks_to_run
+        }
         for future in as_completed(futures):
             tag, task_settings = futures[future]
             try:
@@ -461,7 +510,8 @@ def build_video_multithread(settings, progress_callback=None):
                 all_summaries.append((tag, task_settings["song_name"], perf_summary))
             except Exception as e:
                 logger.error(f"Error building '{tag}' video: {e}", exc_info=False)
-                if progress_callback: progress_callback(0, f"{tag}_error")
+                if progress_callback:
+                    progress_callback(0, f"{tag}_error")
 
     overall_end_time = time.time()
 
