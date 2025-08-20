@@ -2,53 +2,72 @@
 import os
 import shutil
 import subprocess
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
+from moviepy.editor import VideoFileClip
 from core.logger import get_logger
 
 logger = get_logger("sikabayan")
 
-def apply_scrolling_text_overlay(input_video_path, output_video_path, song_text, total_duration, resolution, encoder_name, encoder_opts, bitrate):
+def apply_scrolling_text_overlay(
+    input_video_path,
+    output_video_path,
+    song_text,
+    total_duration,
+    resolution,
+    encoder_name,
+    encoder_opts,
+    bitrate,
+    font_color="white",
+    stroke_color="black",
+    stroke_width=2
+):
     """
-    Menambahkan teks overlay berjalan ke file video yang sudah ada menggunakan FFmpeg secara langsung untuk performa maksimal.
-    Catatan: Argumen 'total_duration' dan 'encoder_opts' tidak digunakan dalam implementasi ini.
+    Menambahkan teks overlay berjalan ke file video dengan FFmpeg.
+    
+    - Landscape (W >= H):
+        teks di bawah, naik 10% dari bawah layar, font normal
+    - Short (portrait, H > W):
+        font lebih kecil (40% dari normal)
+        teks 35% dari bawah (y = h*0.65)
+    """
 
-    Args:
-        input_video_path (str): Path ke video input.
-        output_video_path (str): Path untuk menyimpan video output.
-        song_text (str): Teks yang akan berjalan.
-        total_duration (float): Durasi total video (tidak digunakan).
-        resolution (tuple): Resolusi video (lebar, tinggi).
-        encoder_name (str): Nama encoder FFmpeg yang akan digunakan (misalnya, 'libx264', 'h264_nvenc').
-        encoder_opts (dict): Opsi untuk encoder (tidak digunakan, preset 'fast' digunakan secara default).
-        bitrate (str): Bitrate video.
-    """
     try:
-        logger.info("Memulai proses overlay teks dengan FFmpeg langsung (Performa Tinggi)...")
+        logger.info("Memulai proses overlay teks dengan FFmpeg langsung...")
 
-        # Amankan teks untuk digunakan dalam command line
+        # Amankan teks agar aman dipakai di command line
         sanitized_text = song_text.replace("'", "'\\''")
 
         # Kecepatan gulir dalam piksel per detik
         scroll_speed = 150
         
-        # Ukuran font dan margin dari bawah
-        fontsize = int(resolution[1] * 0.05)
+        # Resolusi video
+        W, H = resolution
         margin_bottom = 20
+        offset = int(H * 0.1)
 
-        # Konstruksi filter `drawtext` FFmpeg.
-        # x='w-mod(t*speed,w+text_w)' menciptakan efek gulir dari kanan ke kiri.
+        # Deteksi mode short (portrait)
+        if H > W:
+            # 📌 Short video
+            fontsize = int(H * 0.05 * 0.4)  # 40% dari default (lebih kecil)
+            y_expr = f"h*0.65"              # 35% dari bawah
+        else:
+            # 📌 Landscape
+            fontsize = int(H * 0.05)        # default 5% tinggi video
+            y_expr = f"h-th-{margin_bottom + offset}"  # naik 10% dari bawah
+
+        # Konstruksi filter drawtext
         video_filter = (
             f"drawtext="
-            f"fontfile='/path/to/your/font/Arial.ttf':"  # PENTING: Ganti dengan path font yang valid
+            f"fontfile='/path/to/your/font/Arial.ttf':"  # ⚠️ Ganti dengan path font valid
             f"text='{sanitized_text}':"
             f"fontsize={fontsize}:"
-            f"fontcolor=white:"
-            f"y=h-th-{margin_bottom}:"
+            f"fontcolor={font_color}:"
+            f"bordercolor={stroke_color}:"
+            f"borderw={stroke_width}:"
+            f"y={y_expr}:"
             f"x='w-mod(t*{scroll_speed},w+text_w)'"
         )
         
         # Perintah FFmpeg
-        # -c:a copy: Salin stream audio tanpa re-encoding (sangat cepat)
         command = [
             'ffmpeg',
             '-i', input_video_path,
@@ -57,28 +76,25 @@ def apply_scrolling_text_overlay(input_video_path, output_video_path, song_text,
             '-b:v', bitrate,
             '-preset', 'fast',
             '-c:a', 'copy',
-            '-y', # Timpa file output jika sudah ada
+            '-y',
             output_video_path
         ]
         
-        # Jalankan perintah FFmpeg. check=True akan memunculkan error jika FFmpeg gagal.
         subprocess.run(command, check=True, capture_output=True, text=True)
         
         logger.info("Proses overlay teks FFmpeg selesai.")
 
     except subprocess.CalledProcessError as e:
-        # Menangkap error spesifik dari FFmpeg dan menampilkannya di log
         logger.error(f"Gagal menambahkan teks overlay dengan FFmpeg. Error: {e.stderr}", exc_info=True)
         if not os.path.exists(output_video_path):
             shutil.copy(input_video_path, output_video_path)
     except Exception as e:
-        logger.error(f"Terjadi kesalahan tak terduga: {e}", exc_info=True)
+        logger.error(f"Kesalahan tak terduga: {e}", exc_info=True)
         if not os.path.exists(output_video_path):
             shutil.copy(input_video_path, output_video_path)
 
 # --- PENTING ---
-# Anda harus mengganti '/path/to/your/font/Arial.ttf' dengan path
-# yang benar ke file font di sistem Anda.
+# Ganti '/path/to/your/font/Arial.ttf' dengan path font yang sesuai di sistem Anda.
 #
 # Contoh Path Font:
 # - Windows: 'C\\:/Windows/Fonts/arialbd.ttf'

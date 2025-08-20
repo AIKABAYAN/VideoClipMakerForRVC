@@ -159,3 +159,48 @@ Outputs:
 7. Known Bugs
 
 
+## Developer Documentation
+
+### Visualizer Module
+
+The visualizer module provides functions to generate audio visualizer sequences from MP3 files. It includes both a traditional batch processing version and a streaming version for better memory efficiency with large files.
+
+#### Functions:
+
+- `write_visualizer_sequence`: Traditional batch processing (loads entire audio file)
+- `write_visualizer_sequence_streaming`: Streaming processing (processes audio in chunks)
+- `generate_visualizer_clip`: Compatibility function for MoviePy clips
+- `generate_visualizer_clip_realtime`: Real-time processing version for MoviePy clips
+
+#### Streaming Version
+
+The streaming version (`write_visualizer_sequence_streaming`) is more memory-efficient and suitable for real-time or large file processing. It processes audio in chunks and normalizes each chunk independently, which may result in slightly different visualizations compared to the batch version. This is expected behavior for real-time processing where future audio data is not available.
+
+#### Visualizer Positioning
+
+The visualizer is positioned at the center of the screen both vertically and horizontally. This positioning works for both YouTube and Shorts formats.
+
+#### Usage Example:
+
+```python
+# Traditional batch processing
+write_visualizer_sequence(
+    mp3_path,
+    fps=30,
+    resolution=(1280, 720),
+    opacity=0.6,
+    scale_height=0.2,
+    out_pattern="output/frame_%08d.png"
+)
+
+# Streaming processing (more memory efficient)
+write_visualizer_sequence_streaming(
+    mp3_path,
+    fps=30,
+    resolution=(1280, 720),
+    opacity=0.6,
+    scale_height=0.2,
+    out_pattern="output/frame_%08d.png",
+    chunk_duration=3.0  # Process 3 seconds at a time
+)
+```

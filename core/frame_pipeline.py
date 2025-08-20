@@ -60,7 +60,7 @@ def create_intro_frame(song_name, artist_name, background_image, resolution):
     except Exception:
         pass
 
-    y_cursor = H * 0.1
+    y_cursor = H * 0.4
     title_bbox = draw.textbbox((0, 0), formatted_song_name, font=title_font, align="center")
     title_w = title_bbox[2] - title_bbox[0]
     title_h = title_bbox[3] - title_bbox[1]
